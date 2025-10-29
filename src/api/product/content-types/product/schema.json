@@ -11,12 +11,6 @@
   },
   "pluginOptions": {},
   "attributes": {
-    "category": {
-      "type": "relation",
-      "relation": "manyToOne",
-      "target": "api::category.category",
-      "inversedBy": "products"
-    },
     "title": {
       "type": "string",
       "required": false
@@ -29,7 +23,7 @@
       "type": "decimal"
     },
     "description": {
-      "type": "string"
+      "type": "text"
     },
     "images": {
       "type": "media",
@@ -40,6 +34,42 @@
         "videos",
         "audios"
       ]
+    },
+    "category": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::category.category",
+      "inversedBy": "products"
+    },
+    "sizes": {
+      "type": "string"
+    },
+    "colors": {
+      "type": "string"
+    },
+    "look": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::product.product",
+      "mappedBy": "products"
+    },
+    "details": {
+      "type": "text"
+    },
+    "sizeInfo": {
+      "type": "string"
+    },
+    "care": {
+      "type": "string"
+    },
+    "about": {
+      "type": "string"
+    },
+    "products": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::product.product",
+      "inversedBy": "look"
     }
   }
 }

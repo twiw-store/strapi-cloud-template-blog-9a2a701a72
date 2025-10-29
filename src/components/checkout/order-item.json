@@ -1,0 +1,25 @@
+{
+  "collectionName": "components_checkout_order_items",
+  "info": {
+    "displayName": "Item"
+  },
+  "options": {},
+  "attributes": {
+    "productId": { "type": "string" },
+    "title": { "type": "string" },
+    "price": { "type": "decimal" },
+    "quantity": { "type": "integer", "default": 1 },
+    "sizes": { "type": "string" },
+    "colors": { "type": "string" },
+
+    "productSlug": { "type": "string" },
+    "imageUrl": { "type": "string" },
+
+    "images": {
+      "type": "media",
+      "multiple": true,
+      "allowedTypes": ["images", "files", "videos", "audios"]
+    }
+  },
+  "config": {}
+}

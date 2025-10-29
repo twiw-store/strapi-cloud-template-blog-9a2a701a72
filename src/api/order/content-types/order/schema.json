@@ -1,0 +1,45 @@
+{
+  "kind": "collectionType",
+  "collectionName": "orders",
+  "info": {
+    "singularName": "order",
+    "pluralName": "orders",
+    "displayName": "Order"
+  },
+  "options": { "draftAndPublish": true },
+  "pluginOptions": {},
+  "attributes": {
+    "Item": {
+      "type": "component",
+      "component": "checkout.order-item",
+      "repeatable": true
+    },
+
+    "emailSentAt": { "type": "datetime" },
+
+    "orderNumber": { "type": "string", "unique": true },
+    "orderStatus": {
+      "type": "enumeration",
+      "enum": ["pending", "paid", "shipped", "delivered", "cancelled"],
+      "default": "pending"
+    },
+    "deliveryMethod": {
+      "type": "enumeration",
+      "enum": ["courier", "pickup"]
+    },
+    "total": { "type": "integer", "default": 0 },
+    "currency": { "type": "string", "default": "RUB" },
+    "country": { "type": "string" },
+    "customerEmail": { "type": "email" },
+    "customerPhone": { "type": "string" },
+    "firstName": { "type": "string" },
+    "lastName": { "type": "string" },
+    "city": { "type": "string" },
+    "street": { "type": "string" },
+    "building": { "type": "string" },
+    "apartment": { "type": "string" },
+    "zip": { "type": "string" },
+    "notes": { "type": "string" },
+    "language": { "type": "string", "default": "ru" }
+  }
+}
