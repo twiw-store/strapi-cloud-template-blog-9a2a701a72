@@ -1,21 +1,75 @@
 {
   "kind": "collectionType",
   "collectionName": "products",
-  "info": { "singularName": "product", "pluralName": "products", "displayName": "Product" },
-  "options": { "draftAndPublish": true },
+  "info": {
+    "singularName": "product",
+    "pluralName": "products",
+    "displayName": "Product"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
   "attributes": {
-    "title": { "type": "string", "required": true, "unique": true },
-    "slug": { "type": "uid", "targetField": "title", "required": true, "unique": true },
-    "description": { "type": "richtext" },
-    "price": { "type": "decimal", "required": true },
-    "images": { "type": "media", "multiple": true },
-    "in_stock": { "type": "boolean", "default": true },
+    "title": {
+      "type": "string",
+      "required": false
+    },
+    "slug": {
+      "type": "uid",
+      "targetField": "title"
+    },
+    "price": {
+      "type": "decimal"
+    },
+    "description": {
+      "type": "text"
+    },
+    "images": {
+      "type": "media",
+      "multiple": true,
+      "allowedTypes": [
+        "images",
+        "files",
+        "videos",
+        "audios"
+      ]
+    },
     "category": {
       "type": "relation",
       "relation": "manyToOne",
       "target": "api::category.category",
-      "inversedBy": "products",
-      "required": true
+      "inversedBy": "products"
+    },
+    "sizes": {
+      "type": "string"
+    },
+    "colors": {
+      "type": "string"
+    },
+    "look": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::product.product",
+      "mappedBy": "products"
+    },
+    "details": {
+      "type": "text"
+    },
+    "sizeInfo": {
+      "type": "string"
+    },
+    "care": {
+      "type": "string"
+    },
+    "about": {
+      "type": "string"
+    },
+    "products": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::product.product",
+      "inversedBy": "look"
     }
   }
 }
