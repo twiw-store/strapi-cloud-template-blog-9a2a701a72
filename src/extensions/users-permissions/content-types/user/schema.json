@@ -1,0 +1,41 @@
+{
+  "kind": "collectionType",
+  "collectionName": "up_users",
+  "info": {
+    "singularName": "user",
+    "pluralName": "users",
+    "displayName": "User",
+    "description": "Extended Users-permissions User with profile fields"
+  },
+  "pluginOptions": {
+    "users-permissions": {
+      "user": true
+    }
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "attributes": {
+    "username": { "type": "string", "required": true, "unique": true, "minLength": 1 },
+    "email": { "type": "email", "required": true, "unique": true, "minLength": 6 },
+    "provider": { "type": "string" },
+    "password": { "type": "password", "minLength": 6, "private": true },
+    "resetPasswordToken": { "type": "string", "private": true },
+    "confirmationToken": { "type": "string", "private": true },
+    "confirmed": { "type": "boolean", "default": false },
+    "blocked": { "type": "boolean", "default": false },
+
+    "role": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.role",
+      "inversedBy": "users"
+    },
+
+    "name": { "type": "string" },
+    "surname": { "type": "string" },
+    "phone": { "type": "string", "minLength": 5, "regex": "^\\+?[0-9\\s\\-()]{7,}$", "required": true },
+    "language": { "type": "enumeration", "enum": ["ru", "en", "fr", "es"], "default": "ru" },
+    "country": { "type": "string" }
+  }
+}

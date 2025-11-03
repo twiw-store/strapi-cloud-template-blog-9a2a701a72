@@ -8,6 +8,9 @@ const asAny = (v: any) => v as any;
 const ALLOWED_STATUS = new Set(['pending', 'paid', 'shipped', 'delivered', 'cancelled']);
 const ALLOWED_LANG = new Set(['ru', 'en', 'fr', 'es'] as const);
 
+// Версия шаблона для принудительного «пробития» кэша почтовиков
+const TEMPLATE_VERSION = process.env.EMAIL_TEMPLATE_VERSION || '2025-10-31.1';
+
 function makeOrderNumber() {
   const d = new Date();
   const y = d.getFullYear();
@@ -17,11 +20,11 @@ function makeOrderNumber() {
 }
 
 function calcTotal(items: any[] = []) {
-  return Math.round(
-    items.reduce((sum, it) =>
-      sum + Number(it?.price || 0) * Number(it?.quantity || 0)
-    , 0)
+  const val = items.reduce(
+    (sum, it) => sum + Number(it?.price || 0) * Number(it?.quantity || 0),
+    0
   );
+  return Math.round(Number.isFinite(val) ? val : 0);
 }
 
 function normalizeEmail(e?: string) {
@@ -52,6 +55,43 @@ function fmtCurrency(amount: number, currency = 'RUB', lang: 'ru'|'en'|'fr'|'es'
   }
 }
 
+/**
+ * Пытаемся вытащить язык/валюту из разных мест:
+ * 1) data.language / data.currency
+ * 2) data.customer.{language,currency}
+ * 3) пользователь (связь user) — u.language / u.currency / u.email
+ * 4) дефолты: ru / RUB
+ */
+async function fillLangAndCurrencyFromProfile(data: any) {
+  // 1–2: из payload
+  if (data.language) data.language = normalizeLang(data.language);
+  if (!data.language && data?.customer?.language) data.language = normalizeLang(data.customer.language);
+  if (!data.currency && data?.customer?.currency) data.currency = String(data.customer.currency).toUpperCase();
+
+  // 3: из пользователя (если связь есть)
+  try {
+    let userId: string | number | undefined;
+    if (typeof data.user === 'number' || typeof data.user === 'string') userId = data.user;
+    else if (data?.user?.id) userId = data.user.id;
+    else if (Array.isArray(data?.user?.connect) && data.user.connect[0]?.id) userId = data.user.connect[0].id;
+
+    if (userId) {
+      const user = await strapi.entityService.findOne('plugin::users-permissions.user', Number(userId));
+      const u = user as any; // читаем кастомные поля безопасно
+
+      if (!data.language && typeof u?.language === 'string') data.language = normalizeLang(u.language);
+      if (!data.currency && typeof u?.currency === 'string') data.currency = String(u.currency).toUpperCase();
+      if (!data.customerEmail && typeof u?.email === 'string') data.customerEmail = normalizeEmail(u.email);
+    }
+  } catch (e) {
+    strapi.log.warn('[ORDER] cannot resolve user language/currency from profile');
+  }
+
+  // 4: дефолты
+  if (!data.language) data.language = 'ru';
+  if (!data.currency) data.currency = 'RUB';
+}
+
 function renderOrderEmailHtml(order: any) {
   const lang = normalizeLang(order?.language);
   const t = {
@@ -63,6 +103,7 @@ function renderOrderEmailHtml(order: any) {
       total: 'Итого',
       delivery: 'Доставка',
       questions: 'Вопросы по заказу?',
+      subscribe: 'Подпишитесь на канал, чтобы не пропустить новости.',
     },
     en: {
       thanks: 'Thank you for your order!',
@@ -72,6 +113,7 @@ function renderOrderEmailHtml(order: any) {
       total: 'Total',
       delivery: 'Delivery',
       questions: 'Questions about your order?',
+      subscribe: 'Subscribe to our channel to never miss updates.',
     },
     fr: {
       thanks: 'Merci pour votre commande !',
@@ -81,6 +123,7 @@ function renderOrderEmailHtml(order: any) {
       total: 'Total',
       delivery: 'Livraison',
       questions: 'Des questions sur votre commande ?',
+      subscribe: 'Abonnez-vous pour ne rien manquer.',
     },
     es: {
       thanks: '¡Gracias por tu pedido!',
@@ -90,6 +133,7 @@ function renderOrderEmailHtml(order: any) {
       total: 'Total',
       delivery: 'Entrega',
       questions: '¿Preguntas sobre tu pedido?',
+      subscribe: 'Suscríbete para no perderte ninguna novedad.',
     },
   }[lang];
 
@@ -98,27 +142,35 @@ function renderOrderEmailHtml(order: any) {
   const supportEmail = process.env.ORDER_PUBLIC_CONTACT || 'support@twiw.store';
   const items: any[] = Array.isArray(order?.Item) ? order.Item : [];
 
-  const itemsHtml = items.map((it) => {
-    const name = it?.name || it?.title || 'Товар';
-    const qty = it?.quantity || it?.qty || 1;
-    const price = Number(it?.price || 0);
-    const lineTotal = price * qty;
-    const img = it?.imageUrl || it?.image || it?.images?.[0]?.url || '';
-    const variant = [it?.size, it?.color].filter(Boolean).join(' • ');
-    return `
-      <tr>
-        <td style="padding:12px 0; display:flex; gap:12px; align-items:center;">
-          ${img ? `<img src="${img}" width="64" height="64" style="border-radius:8px; object-fit:cover" alt="">` : ''}
-          <div>
-            <div style="font-weight:600; font-size:14px; color:#111827">${name}</div>
-            ${variant ? `<div style="font-size:12px; color:#6B7280">${variant}</div>` : ''}
-            <div style="font-size:12px; color:#6B7280">${t.qty}: ${qty}</div>
-          </div>
-        </td>
-        <td style="padding:12px 0; text-align:right; font-weight:600; color:#111827;">${fmtCurrency(lineTotal, order.currency || 'RUB', lang)}</td>
-      </tr>
-    `;
-  }).join('') || `<tr><td style="padding:12px 0; color:#6B7280">—</td><td></td></tr>`;
+  const itemsHtml =
+    items.map((it) => {
+      const name = it?.name || it?.title || 'Товар';
+      const qty = Number(it?.quantity || it?.qty || 1);
+      const price = Number(it?.price || 0);
+      const lineTotal = price * qty;
+      const img = it?.imageUrl || it?.image || it?.images?.[0]?.url || '';
+      const variant = [it?.size, it?.color].filter(Boolean).join(' • ');
+      return `
+        <tr>
+          <td style="padding:14px 0; border-bottom:1px solid #F3F4F6;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="width:40px; vertical-align:top;">
+                  ${img ? `<img src="${img}" width="40" height="60" style="display:block;border-radius:6px;object-fit:contain;" alt="">` : ''}
+                </td>
+                <td style="vertical-align:top; padding-right:8px;">
+                  <div style="font-weight:600; font-size:14px; color:#111827; margin-bottom:4px;">${name}</div>
+                  ${variant ? `<div style="font-size:12px; color:#6B7280; margin-bottom:2px;">${variant}</div>` : ''}
+                  <div style="font-size:12px; color:#6B7280;">${t.qty}: ${qty}</div>
+                </td>
+                <td style="vertical-align:top; text-align:right; font-weight:600; color:#111827; white-space:nowrap;">
+                  ${fmtCurrency(lineTotal, order.currency || 'RUB', lang)}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>`;
+    }).join('') || `<tr><td style="padding:12px 0; color:#6B7280">—</td></tr>`;
 
   const address = [
     order?.country, order?.city, order?.street,
@@ -129,48 +181,78 @@ function renderOrderEmailHtml(order: any) {
 
   const total = Number(order?.total || 0);
 
+  // preheader + версия шаблона как кэш-бастер
+  const preheader = {
+    ru: 'Детали вашего заказа внутри',
+    en: 'Your order details inside',
+    fr: 'Détails de votre commande',
+    es: 'Detalles de tu pedido',
+  }[lang];
+
   return `<!doctype html>
-<html lang="${lang}"><head><meta charset="utf-8"><title>Order ${order.orderNumber}</title></head>
+<!-- TWIW Template v=${TEMPLATE_VERSION} -->
+<html lang="${lang}">
+<head>
+  <meta charset="utf-8">
+  <title>Order ${order.orderNumber}</title>
+  <meta name="x-template-version" content="${TEMPLATE_VERSION}">
+</head>
 <body style="margin:0; background:#F9FAFB; font-family:ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
+  <span style="display:none !important; visibility:hidden; opacity:0; color:transparent; height:0; width:0; overflow:hidden;">
+    ${preheader}
+  </span>
   <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
     <tr><td align="center" style="padding:32px 16px;">
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:640px; background:#FFFFFF; border-radius:16px; overflow:hidden; box-shadow:0 4px 24px rgba(0,0,0,0.06)">
         <tr><td style="padding:24px 28px; border-bottom:1px solid #F3F4F6;">
-          <table width="100%"><tr>
-            <td><img src="${logo}" alt="TWIW" height="32" style="display:block"></td>
-            <td align="right" style="font-size:12px; color:#6B7280;">№ ${order.orderNumber}</td>
-          </tr></table>
-        </td></tr>
-        <tr><td style="padding:24px 28px;">
-          <h1 style="margin:0 0 8px; font-size:20px; color:#111827;">${t.thanks}</h1>
-          <p style="margin:0; color:#374151; font-size:14px;">${t.intro}</p>
-        </td></tr>
-        <tr><td style="padding:0 28px 8px; font-weight:600; font-size:14px; color:#111827;">${t.items}</td></tr>
-        <tr><td style="padding:0 28px 8px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${itemsHtml}</table>
-        </td></tr>
-        <tr><td style="padding:16px 28px;">
-          <table width="100%" cellpadding="0" cellspacing="0">
-            <tr><td style="color:#6B7280; font-size:14px;">${t.total}</td>
-                <td align="right" style="font-weight:700; color:#111827; font-size:16px;">${fmtCurrency(total, order.currency || 'RUB', lang)}</td>
+          <table width="100%" role="presentation">
+            <tr>
+              <td><img src="${logo}" alt="TWIW" height="32" style="display:block"></td>
+              <td align="right" style="font-size:12px; color:#6B7280;">№ ${order.orderNumber}</td>
             </tr>
           </table>
         </td></tr>
-        <tr><td style="padding:8px 28px 20px;">
-          <div style="background:#F9FAFB; border:1px solid #E5E7EB; border-radius:12px; padding:12px 14px;">
+
+        <tr><td style="padding:24px 28px;">
+          <h1 style="margin:0 0 10px; font-size:20px; color:#111827;">${t.thanks}</h1>
+          <p style="margin:0; color:#374151; font-size:14px;">${t.intro}</p>
+        </td></tr>
+
+        <tr><td style="padding:0 28px 8px; font-weight:600; font-size:14px; color:#111827;">${t.items}</td></tr>
+        <tr><td style="padding:0 28px 0;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${itemsHtml}</table>
+        </td></tr>
+
+        <tr><td style="padding:16px 28px;">
+          <table width="100%" role="presentation">
+            <tr>
+              <td style="color:#6B7280; font-size:14px;">${t.total}</td>
+              <td align="right" style="font-weight:700; color:#111827; font-size:16px;">${fmtCurrency(total, order.currency || 'RUB', lang)}</td>
+            </tr>
+          </table>
+        </td></tr>
+
+        <tr><td style="padding:10px 48px 18px;">
+          <div style="background:#F9FAFB; border:1px solid #E5E7EB; border-radius:10px; padding:10px 12px;">
             <div style="font-weight:600; color:#111827; font-size:14px; margin-bottom:4px;">${t.delivery}</div>
             <div style="color:#374151; font-size:14px;">${order?.deliveryMethod || 'courier'}${address ? ` • ${address}` : ''}</div>
           </div>
         </td></tr>
-        <tr><td style="padding:0 28px 24px; color:#6B7280; font-size:12px;">
-          ${t.questions} <a href="mailto:${process.env.ORDER_PUBLIC_CONTACT || 'support@twiw.store'}" style="color:#111827; text-decoration:none;">${process.env.ORDER_PUBLIC_CONTACT || 'support@twiw.store'}</a>
-          • <a href="${process.env.SITE_URL || 'https://twiw.store'}" style="color:#111827; text-decoration:none;">${process.env.SITE_URL || 'https://twiw.store'}</a>.
+
+        <tr><td style="padding:0 28px 14px; color:#6B7280; font-size:12px;">
+          ${t.questions} <a href="mailto:${supportEmail}" style="color:#111827; text-decoration:none;">${supportEmail}</a>
+          • <a href="${siteUrl}" style="color:#111827; text-decoration:none;">${siteUrl}</a>.
+        </td></tr>
+
+        <tr><td style="padding:0 28px 24px; color:#9CA3AF; font-size:12px;">
+          ${t.subscribe}
         </td></tr>
       </table>
       <div style="padding:16px; color:#9CA3AF; font-size:11px;">© ${new Date().getFullYear()} TWIW</div>
     </td></tr>
   </table>
-</body></html>`;
+</body>
+</html>`;
 }
 
 async function sendBothEmails(order: any) {
@@ -183,6 +265,8 @@ async function sendBothEmails(order: any) {
 
   const clientTo = normalizeEmail(order.customerEmail);
   const adminTo  = normalizeEmail(process.env.ORDER_NOTIFY_EMAIL || '');
+  const from     = process.env.SMTP_FROM || process.env.SMTP_USER;
+  const replyTo  = process.env.SMTP_REPLY_TO || from;
 
   const lang = normalizeLang(order?.language);
   const subjects = {
@@ -196,11 +280,11 @@ async function sendBothEmails(order: any) {
   if (clientTo) {
     const html = renderOrderEmailHtml(order);
     const res1 = await emailSvc.send({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      replyTo: process.env.SMTP_REPLY_TO || process.env.SMTP_USER,
+      from,
+      replyTo,
       to: clientTo,
       subject: subjects[lang],
-      text: `Спасибо за покупку! Сумма: ${order.total} ${order.currency || 'RUB'}.`,
+      text: `Спасибо за покупку! Сумма: ${fmtCurrency(Number(order.total||0), order.currency || 'RUB', lang)}`,
       html,
     });
     strapi.log.info(`[EMAIL→CLIENT] ok to=${clientTo} messageId=${res1?.messageId ?? '-'}`);
@@ -208,74 +292,74 @@ async function sendBothEmails(order: any) {
     strapi.log.warn(`[EMAIL→CLIENT] skip: empty customerEmail for ${order.orderNumber}`);
   }
 
-  // админу текст
+  // админу — текстовый дайджест
   if (adminTo) {
     const items = Array.isArray(order?.Item) ? order.Item : [];
     const lines = items.map((it: any) =>
-      `• ${it?.name || it?.title || 'Товар'} × ${it?.quantity || 1} = ${fmtCurrency(Number(it?.price||0) * Number(it?.quantity||1), order.currency || 'RUB', lang)}`
+      `• ${it?.name || it?.title || 'Товар'} × ${Number(it?.quantity||1)} = ${fmtCurrency(Number(it?.price||0) * Number(it?.quantity||1), order.currency || 'RUB', lang)}`
     ).join('\n');
 
     const res2 = await emailSvc.send({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      from,
       to: adminTo,
       subject: `Новый оплаченный заказ ${order.orderNumber}`,
-      text: `Сумма: ${fmtCurrency(Number(order.total||0), order.currency||'RUB', lang)}\nКлиент: ${order.customerEmail}\nДоставка: ${order.deliveryMethod || '-'}\n${lines}`,
+      text:
+        `Сумма: ${fmtCurrency(Number(order.total||0), order.currency||'RUB', lang)}\n` +
+        `Клиент: ${order.customerEmail}\n` +
+        `Доставка: ${order.deliveryMethod || '-'}\n` +
+        `${lines}`,
     });
     strapi.log.info(`[EMAIL→ADMIN] ok to=${adminTo} messageId=${res2?.messageId ?? '-'}`);
   } else {
     strapi.log.warn('[EMAIL→ADMIN] skip: ORDER_NOTIFY_EMAIL not set');
   }
 
-  await strapi.entityService.update('api::order.order', order.id, {
-    data: { emailSentAt: new Date() },
-  });
-  strapi.log.info(`[ORDER] email marked sent for ${order.orderNumber}`);
+  // помечаем, что письмо отправлено (идемпотентно)
+  try {
+    await strapi.entityService.update('api::order.order', order.id, {
+      data: { emailSentAt: new Date() },
+    });
+    strapi.log.info(`[ORDER] email marked sent for ${order.orderNumber}`);
+  } catch (e) {
+    strapi.log.error('[ORDER] failed to mark emailSentAt', e);
+  }
 }
 
 export default {
   async beforeCreate(event: BeforeEvent) {
+    strapi.log.info('[TEST] beforeCreate(order) fired');
     const { data } = event.params;
     if (!data) return;
 
-    // язык/валюта/статус по умолчанию + нормализация
-    data.language = normalizeLang(data.language);
-    if (!data.currency) data.currency = 'RUB';
+    await fillLangAndCurrencyFromProfile(data);
     data.orderStatus = toStatusCode(data.orderStatus);
 
-    // номер заказа
     if (!data.orderNumber || data.orderNumber === '-' || data.orderNumber === '') {
       data.orderNumber = makeOrderNumber();
     }
 
-    // total из Item/items
-    const items = Array.isArray(data.Item)
-      ? data.Item
-      : Array.isArray(data.items)
-      ? data.items
-      : [];
+    const items = Array.isArray(data.Item) ? data.Item : Array.isArray(data.items) ? data.items : [];
     if (items.length) data.total = calcTotal(items);
   },
 
   async beforeUpdate(event: BeforeEvent) {
+    strapi.log.info('[TEST] beforeUpdate(order) fired');
     const { data } = event.params;
     if (!data) return;
 
-    if ('language' in data) data.language = normalizeLang(data.language);
+    await fillLangAndCurrencyFromProfile(data);
     if ('orderStatus' in data) data.orderStatus = toStatusCode(data.orderStatus);
 
     if (!data.orderNumber || data.orderNumber === '-' || data.orderNumber === '') {
       data.orderNumber = makeOrderNumber();
     }
 
-    const items = Array.isArray(data.Item)
-      ? data.Item
-      : Array.isArray(data.items)
-      ? data.items
-      : [];
+    const items = Array.isArray(data.Item) ? data.Item : Array.isArray(data.items) ? data.items : [];
     if (items.length) data.total = calcTotal(items);
   },
 
   async afterCreate(event: AfterEvent) {
+    strapi.log.info('[TEST] afterCreate(order) fired');
     try {
       const order = asAny(await strapi.entityService.findOne('api::order.order', event.result.id, {
         populate: { Item: true },
@@ -287,16 +371,17 @@ export default {
       if (Number(order?.total || 0) !== mustBe) {
         await strapi.entityService.update('api::order.order', order.id, { data: { total: mustBe } });
         order.total = mustBe;
-        strapi.log.info('[ORDER] afterCreate fixed total to', mustBe);
+        strapi.log.info('[ORDER] afterCreate fixed total to ' + mustBe);
       }
 
-      event.result = order; // оставить populate
+      event.result = order; // вернуть с populate
     } catch (e) {
       strapi.log.error('[ORDER] afterCreate populate/total failed', e);
     }
   },
 
   async afterUpdate(event: AfterEvent) {
+    strapi.log.info('[TEST] afterUpdate(order) fired');
     let order: any = event.result;
 
     try {
@@ -310,13 +395,13 @@ export default {
       if (Number(order?.total || 0) !== mustBe) {
         await strapi.entityService.update('api::order.order', order.id, { data: { total: mustBe } });
         order.total = mustBe;
-        strapi.log.info('[ORDER] afterUpdate fixed total to', mustBe);
+        strapi.log.info('[ORDER] afterUpdate fixed total to ' + mustBe);
       }
     } catch (e) {
       strapi.log.error('[ORDER] afterUpdate total fix failed', e);
     }
 
-    // только при paid и если письмо ещё не отправляли
+    // Только при paid и если письмо ещё не отправляли
     try {
       if (order.orderStatus === 'paid' && !order.emailSentAt) {
         await sendBothEmails(order);
