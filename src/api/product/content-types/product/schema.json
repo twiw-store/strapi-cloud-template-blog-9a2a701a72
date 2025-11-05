@@ -20,7 +20,36 @@
       "targetField": "title"
     },
     "price": {
-      "type": "decimal"
+      "type": "decimal",
+      "columnType": "decimal(10,2)"
+    },
+    "compareAtPrice": {
+      "type": "decimal",
+      "required": false,
+      "default": null,
+      "configurable": true,
+      "pluginOptions": {
+        "content-manager": { "visible": true }
+      },
+      "columnType": "decimal(10,2)"
+    },
+    "saleStart": {
+      "type": "datetime",
+      "required": false,
+      "default": null,
+      "configurable": true,
+      "pluginOptions": {
+        "content-manager": { "visible": true }
+      }
+    },
+    "saleEnd": {
+      "type": "datetime",
+      "required": false,
+      "default": null,
+      "configurable": true,
+      "pluginOptions": {
+        "content-manager": { "visible": true }
+      }
     },
     "description": {
       "type": "text"
@@ -28,12 +57,7 @@
     "images": {
       "type": "media",
       "multiple": true,
-      "allowedTypes": [
-        "images",
-        "files",
-        "videos",
-        "audios"
-      ]
+      "allowedTypes": ["images", "files", "videos", "audios"]
     },
     "category": {
       "type": "relation",
@@ -53,6 +77,12 @@
       "target": "api::product.product",
       "mappedBy": "products"
     },
+    "products": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::product.product",
+      "inversedBy": "look"
+    },
     "details": {
       "type": "text"
     },
@@ -64,12 +94,6 @@
     },
     "about": {
       "type": "string"
-    },
-    "products": {
-      "type": "relation",
-      "relation": "manyToMany",
-      "target": "api::product.product",
-      "inversedBy": "look"
     }
   }
 }
