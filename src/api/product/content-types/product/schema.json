@@ -6,71 +6,55 @@
     "pluralName": "products",
     "displayName": "Product"
   },
-  "options": {
-    "draftAndPublish": true
-  },
+  "options": { "draftAndPublish": true },
   "pluginOptions": {},
   "attributes": {
-    "title": {
-      "type": "string",
-      "required": false
-    },
-    "slug": {
-      "type": "uid",
-      "targetField": "title"
-    },
+    "title": { "type": "string" },
+    "slug": { "type": "uid", "targetField": "title" },
+
     "price": {
       "type": "decimal",
-      "columnType": "decimal(10,2)"
+      "options": { "precision": 10, "scale": 2 }
     },
     "compareAtPrice": {
       "type": "decimal",
       "required": false,
       "default": null,
+      "options": { "precision": 10, "scale": 2 },
       "configurable": true,
       "pluginOptions": {
         "content-manager": { "visible": true }
-      },
-      "columnType": "decimal(10,2)"
+      }
     },
+
     "saleStart": {
       "type": "datetime",
       "required": false,
       "default": null,
       "configurable": true,
-      "pluginOptions": {
-        "content-manager": { "visible": true }
-      }
+      "pluginOptions": { "content-manager": { "visible": true } }
     },
     "saleEnd": {
       "type": "datetime",
       "required": false,
       "default": null,
       "configurable": true,
-      "pluginOptions": {
-        "content-manager": { "visible": true }
-      }
+      "pluginOptions": { "content-manager": { "visible": true } }
     },
-    "description": {
-      "type": "text"
-    },
-    "images": {
-      "type": "media",
-      "multiple": true,
-      "allowedTypes": ["images", "files", "videos", "audios"]
-    },
+
+    "description": { "type": "text" },
+    "images": { "type": "media", "multiple": true, "allowedTypes": ["images","files","videos","audios"] },
+
     "category": {
       "type": "relation",
       "relation": "manyToOne",
       "target": "api::category.category",
       "inversedBy": "products"
     },
-    "sizes": {
-      "type": "string"
-    },
-    "colors": {
-      "type": "string"
-    },
+
+    "sizes": { "type": "string" },
+    "colors": { "type": "string" },
+
     "look": {
       "type": "relation",
       "relation": "manyToMany",
@@ -83,17 +67,10 @@
       "target": "api::product.product",
       "inversedBy": "look"
     },
-    "details": {
-      "type": "text"
-    },
-    "sizeInfo": {
-      "type": "string"
-    },
-    "care": {
-      "type": "string"
-    },
-    "about": {
-      "type": "string"
-    }
+
+    "details": { "type": "text" },
+    "sizeInfo": { "type": "string" },
+    "care": { "type": "string" },
+    "about": { "type": "string" }
   }
 }
