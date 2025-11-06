@@ -1,0 +1,7 @@
+{
+  "collectionName": "components_product_dimensions",
+  "info": { "displayName": "Dimensions", "description": "Габариты/вес" },
+  "attributes": {
+    "weightKg": { "type": "decimal", "options": { "precision": 8, "scale": 3 } }
+  }
+}

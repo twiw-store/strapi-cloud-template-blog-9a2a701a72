@@ -1,0 +1,11 @@
+{
+  "collectionName": "components_product_variants",
+  "info": { "displayName": "Variant", "description": "Вариант товара" },
+  "attributes": {
+    "sku":          { "type": "string" },
+    "externalCode": { "type": "string" },
+    "barcode":      { "type": "string" },
+    "size":         { "type": "string" },
+    "stock":        { "type": "integer", "default": 0 }
+  }
+}
