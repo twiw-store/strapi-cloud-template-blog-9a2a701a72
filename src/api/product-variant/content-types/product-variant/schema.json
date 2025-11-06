@@ -31,5 +31,6 @@
     "weight": { "type": "decimal", "options": { "precision": 10, "scale": 3 } },
     "images": { "type": "media", "multiple": true, "allowedTypes": ["images"] },
     "isActive": { "type": "boolean", "default": true }
+    
   }
 }

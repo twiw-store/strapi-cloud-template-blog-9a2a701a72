@@ -1,0 +1,11 @@
+{
+  "collectionName": "components_product_variants",
+  "info": { "displayName": "Variant" },
+  "attributes": {
+    "size": { "type": "string", "required": true },
+    "stock": { "type": "integer", "default": 0, "required": true },
+    "price": { "type": "decimal", "options": { "precision": 10, "scale": 2 } },
+    "compareAtPrice": { "type": "decimal", "options": { "precision": 10, "scale": 2 } },
+    "sku": { "type": "string" }
+  }
+}
