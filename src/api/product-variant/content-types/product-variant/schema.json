@@ -1,0 +1,35 @@
+{
+  "kind": "collectionType",
+  "collectionName": "product_variants",
+  "info": {
+    "singularName": "product-variant",
+    "pluralName": "product-variants",
+    "displayName": "Product Variant"
+  },
+  "options": { "draftAndPublish": true },
+  "pluginOptions": {},
+  "attributes": {
+    "product": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::product.product",
+      "inversedBy": "variants"
+    },
+    "sku": { "type": "string", "required": true, "unique": true },
+    "size": { "type": "string", "required": true },
+    "color": { "type": "string" },
+    "stock": { "type": "integer", "default": 0 },
+    "price": { "type": "decimal", "options": { "precision": 10, "scale": 2 } },
+    "compareAtPrice": {
+      "type": "decimal",
+      "default": null,
+      "options": { "precision": 10, "scale": 2 }
+    },
+    "saleStart": { "type": "datetime", "default": null },
+    "saleEnd": { "type": "datetime", "default": null },
+    "barcode": { "type": "string" },
+    "weight": { "type": "decimal", "options": { "precision": 10, "scale": 3 } },
+    "images": { "type": "media", "multiple": true, "allowedTypes": ["images"] },
+    "isActive": { "type": "boolean", "default": true }
+  }
+}

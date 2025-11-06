@@ -67,7 +67,12 @@
       "target": "api::product.product",
       "inversedBy": "look"
     },
-
+    "variants": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::product-variant.product-variant",
+      "mappedBy": "product"
+    },
     "details": { "type": "text" },
     "sizeInfo": { "type": "string" },
     "care": { "type": "string" },
