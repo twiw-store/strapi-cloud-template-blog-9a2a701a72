@@ -11,9 +11,12 @@
     "quantity": { "type": "integer", "default": 1 },
     "sizes": { "type": "string" },
     "colors": { "type": "string" },
-
     "productSlug": { "type": "string" },
     "imageUrl": { "type": "string" },
+
+    "sku": { "type": "string" },
+    "externalCode": { "type": "string" },
+    "barcode": { "type": "string" },
 
     "images": {
       "type": "media",
