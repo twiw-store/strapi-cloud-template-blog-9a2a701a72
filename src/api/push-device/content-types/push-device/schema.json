@@ -1,0 +1,16 @@
+{
+  "kind": "collectionType",
+  "collectionName": "push_devices",
+  "info": { "singularName": "push-device", "pluralName": "push-devices", "displayName": "Push Device" },
+  "options": { "draftAndPublish": false },
+  "attributes": {
+    "token": { "type": "string", "required": true, "unique": true },
+    "platform": { "type": "enumeration", "enum": ["ios", "android", "web"] },
+    "lang": { "type": "string", "default": "ru" },
+    "country": { "type": "string" },
+    "marketingOptIn": { "type": "boolean", "default": true },
+    "tags": { "type": "json", "default": [] },
+    "lastSeenAt": { "type": "datetime" },
+    "user": { "type": "relation", "relation": "oneToOne", "target": "plugin::users-permissions.user" }
+  }
+}
