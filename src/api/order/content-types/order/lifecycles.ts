@@ -20,14 +20,26 @@ function makeOrderNumber() {
   return `TWIW-${y}${m}${day}-${randomUUID().slice(0, 8).toUpperCase()}`;
 }
 
+// 👇 добавлено: строгий парсер чисел из строк вида "1 990", "1,990.00", "1990,00", "€1 990"
+function toNumberStrict(v: any): number {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  if (typeof v === 'string') {
+    const cleaned = v.replace(/[^\d.,-]/g, '').replace(/,/g, '.').replace(/\s+/g, '');
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+// 👇 обновлено: считаем total с учётом строковых цен и qty, дефолт qty=1
 function calcTotal(items: any[] = []) {
   const val = items.reduce((sum, it) => {
-    const price = Number(it?.price ?? 0);
-    const qty = Number(it?.quantity ?? 1) || 1; // 👈 дефолт 1 (раньше было 0)
-    if (!Number.isFinite(price) || !Number.isFinite(qty)) return sum;
+    const price =
+      toNumberStrict(it?.price ?? it?.priceValue ?? it?.finalPrice ?? it?.currentPrice ?? 0);
+    const qty = toNumberStrict(it?.quantity ?? it?.qty ?? 1) || 1;
     return sum + price * qty;
   }, 0);
-  return Math.round(Number.isFinite(val) ? val : 0);
+  return Math.round(val);
 }
 
 function normalizeEmail(e?: string) {
@@ -80,7 +92,7 @@ async function fillLangAndCurrencyFromProfile(data: any) {
 
     if (userId) {
       const user = await strapi.entityService.findOne('plugin::users-permissions.user', Number(userId));
-      const u = user as any; // читаем кастомные поля безопасно
+      const u = user as any;
 
       if (!data.language && typeof u?.language === 'string') data.language = normalizeLang(u.language);
       if (!data.currency && typeof u?.currency === 'string') data.currency = String(u.currency).toUpperCase();
@@ -356,9 +368,9 @@ function pushOrderText(kind: 'created'|'paid'|'shipped'|'delivered', lang?: stri
     },
     fr: {
       created: (x: string) => `Votre commande n°${x} a été passée.`,
-      paid:    (x: string) => `Paiement de la commande н°${x} confirmé.`,
-      shipped: (x: string) => `La commande н°${x} a été expédiée.`,
-      delivered:(x: string) => `La commande н°${x} a été livrée.`,
+      paid:    (x: string) => `Paiement de la commande n°${x} confirmé.`,
+      shipped: (x: string) => `La commande n°${x} a été expédiée.`,
+      delivered:(x: string) => `La commande n°${x} a été livrée.`,
     },
     es: {
       created: (x: string) => `Tu pedido #${x} ha sido realizado.`,
