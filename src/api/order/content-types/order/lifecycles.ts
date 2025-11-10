@@ -21,10 +21,12 @@ function makeOrderNumber() {
 }
 
 function calcTotal(items: any[] = []) {
-  const val = items.reduce(
-    (sum, it) => sum + Number(it?.price || 0) * Number(it?.quantity || 0),
-    0
-  );
+  const val = items.reduce((sum, it) => {
+    const price = Number(it?.price ?? 0);
+    const qty = Number(it?.quantity ?? 1) || 1; // 👈 дефолт 1 (раньше было 0)
+    if (!Number.isFinite(price) || !Number.isFinite(qty)) return sum;
+    return sum + price * qty;
+  }, 0);
   return Math.round(Number.isFinite(val) ? val : 0);
 }
 
@@ -354,9 +356,9 @@ function pushOrderText(kind: 'created'|'paid'|'shipped'|'delivered', lang?: stri
     },
     fr: {
       created: (x: string) => `Votre commande n°${x} a été passée.`,
-      paid:    (x: string) => `Paiement de la commande n°${x} confirmé.`,
-      shipped: (x: string) => `La commande n°${x} a été expédiée.`,
-      delivered:(x: string) => `La commande n°${x} a été livrée.`,
+      paid:    (x: string) => `Paiement de la commande н°${x} confirmé.`,
+      shipped: (x: string) => `La commande н°${x} a été expédiée.`,
+      delivered:(x: string) => `La commande н°${x} a été livrée.`,
     },
     es: {
       created: (x: string) => `Tu pedido #${x} ha sido realizado.`,
