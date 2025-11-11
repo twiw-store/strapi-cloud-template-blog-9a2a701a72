@@ -2,11 +2,11 @@
 import { randomUUID } from 'node:crypto';
 
 type BeforeEvent = { params: { data: Record<string, any>; where?: any } };
-type AfterEvent = { result: any; params?: any };
+type AfterEvent  = { result: any; params?: any };
 const asAny = (v: any) => v as any;
 
 const ALLOWED_STATUS = new Set(['pending', 'paid', 'shipped', 'delivered', 'cancelled']);
-const ALLOWED_LANG = new Set(['ru', 'en', 'fr', 'es'] as const);
+const ALLOWED_LANG   = new Set(['ru', 'en', 'fr', 'es'] as const);
 
 // Версия шаблона для принудительного «пробития» кэша почтовиков
 const TEMPLATE_VERSION = process.env.EMAIL_TEMPLATE_VERSION || '2025-10-31.1';
@@ -78,13 +78,13 @@ async function fillLangAndCurrencyFromProfile(data: any) {
 
     if (userId) {
       const user = await strapi.entityService.findOne('plugin::users-permissions.user', Number(userId));
-      const u = user as any; // читаем кастомные поля безопасно
+      const u = user as any;
 
       if (!data.language && typeof u?.language === 'string') data.language = normalizeLang(u.language);
       if (!data.currency && typeof u?.currency === 'string') data.currency = String(u.currency).toUpperCase();
       if (!data.customerEmail && typeof u?.email === 'string') data.customerEmail = normalizeEmail(u.email);
     }
-  } catch (e) {
+  } catch {
     strapi.log.warn('[ORDER] cannot resolve user language/currency from profile');
   }
 
@@ -183,6 +183,7 @@ function renderOrderEmailHtml(order: any) {
 
   const total = Number(order?.total || 0);
 
+  // preheader + версия шаблона как кэш-бастер
   const preheader = {
     ru: 'Детали вашего заказа внутри',
     en: 'Your order details inside',
@@ -235,7 +236,7 @@ function renderOrderEmailHtml(order: any) {
 
         <tr><td style="padding:10px 48px 18px;">
           <div style="background:#F9FAFB; border:1px solid #E5E7EB; border-radius:10px; padding:10px 12px;">
-            <div style="font-weight:600; color:#111827; font-size:14px; margin-bottom:4px;">${t.delivery}</div>
+            <div style="font-weight:600; color:#111827; font-size:14px;">${t.delivery}</div>
             <div style="color:#374151; font-size:14px;">${order?.deliveryMethod || 'courier'}${address ? ` • ${address}` : ''}</div>
           </div>
         </td></tr>
@@ -327,7 +328,7 @@ async function sendBothEmails(order: any) {
   }
 }
 
-// ===== PUSH TEMPLATES (встроено, чтобы не тянуть внешние файлы) =====
+// ===== PUSH TEMPLATES =====
 function pushOrderText(kind: 'created'|'paid'|'shipped'|'delivered', lang?: string, n?: string) {
   const L = (lang || 'en').toLowerCase();
   const pick = (dict: any) => dict[L] || dict.en;
@@ -367,7 +368,6 @@ function pushOrderText(kind: 'created'|'paid'|'shipped'|'delivered', lang?: stri
   return { title, body };
 }
 
-// ===== PUSH send (без внешних зависимостей) =====
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
 async function findUserDeviceTokens(userId?: number | string | null) {
@@ -405,7 +405,6 @@ async function sendPush(kind: 'created'|'paid'|'shipped'|'delivered', order: any
     ttl: 3600 * 24 * 7,
   }));
 
-  // Expo допускает отправку массивом (батчи до ~100)
   for (let i = 0; i < messages.length; i += 100) {
     const chunk = messages.slice(i, i + 100);
     try {
@@ -424,7 +423,6 @@ async function sendPush(kind: 'created'|'paid'|'shipped'|'delivered', order: any
 // ===== LIFECYCLES =====
 export default {
   async beforeCreate(event: BeforeEvent) {
-    strapi.log.info('[TEST] beforeCreate(order) fired');
     const { data } = event.params;
     if (!data) return;
 
@@ -435,30 +433,34 @@ export default {
       data.orderNumber = makeOrderNumber();
     }
 
-    // 🔥 ПРОБА: фиксируем total, чтобы убедиться, что lifecycle срабатывает
-    strapi.log.info('[ORDER][probe] forcing total=777777');
-    data.total = 777777;
+    // нормализуем поле позиций и жёстко логируем вход
+    if (!Array.isArray(data.Item) && Array.isArray((data as any).items)) {
+      data.Item = (data as any).items;
+    }
+    strapi.log.info('[ORDER][beforeCreate] incoming items = ' + JSON.stringify(data.Item || [], null, 0));
 
-    // ⛔ ВРЕМЕННО отключаем пересчёт, чтобы проба не затиралась
-    // const items = Array.isArray(data.Item) ? data.Item : Array.isArray(data.items) ? data.items : [];
-    // if (items.length) data.total = calcTotal(items);
+    // приводим цены/кол-во к числам и считаем total
+    const items = Array.isArray(data.Item) ? data.Item.map((it: any) => ({
+      ...it,
+      price: Number(it?.price ?? it?.finalPrice ?? it?.currentPrice ?? 0),
+      quantity: Number(it?.quantity ?? it?.qty ?? 1) || 1,
+    })) : [];
+
+    data.total = items.length ? calcTotal(items) : 0;
   },
 
   async beforeUpdate(event: BeforeEvent) {
-    strapi.log.info('[TEST] beforeUpdate(order) fired');
     const { data, where } = event.params;
     if (!data) return;
 
-    // зафиксировать предыдущий статус (для точной детекции смены)
+    // зафиксировать предыдущий статус
     try {
-      const id = Number(where?.id || data?.id);
+      const id = Number(where?.id || (data as any)?.id);
       if (id) {
         const prev = await strapi.entityService.findOne('api::order.order', id, { fields: ['orderStatus'] });
         if (prev?.orderStatus) (data as any)._prevStatus = String(prev.orderStatus);
       }
-    } catch (e) {
-      // тихо
-    }
+    } catch {}
 
     await fillLangAndCurrencyFromProfile(data);
     if ('orderStatus' in data) data.orderStatus = toStatusCode(data.orderStatus);
@@ -467,12 +469,21 @@ export default {
       data.orderNumber = makeOrderNumber();
     }
 
-    const items = Array.isArray(data.Item) ? data.Item : Array.isArray(data.items) ? data.items : [];
+    if (!Array.isArray(data.Item) && Array.isArray((data as any).items)) {
+      data.Item = (data as any).items;
+    }
+    strapi.log.info('[ORDER][beforeUpdate] incoming items = ' + JSON.stringify(data.Item || [], null, 0));
+
+    const items = Array.isArray(data.Item) ? data.Item.map((it: any) => ({
+      ...it,
+      price: Number(it?.price ?? it?.finalPrice ?? it?.currentPrice ?? 0),
+      quantity: Number(it?.quantity ?? it?.qty ?? 1) || 1,
+    })) : [];
+
     if (items.length) data.total = calcTotal(items);
   },
 
   async afterCreate(event: AfterEvent) {
-    strapi.log.info('[TEST] afterCreate(order) fired');
     try {
       const order = asAny(await strapi.entityService.findOne('api::order.order', event.result.id, {
         populate: { Item: true, user: true, customer: true },
@@ -487,26 +498,19 @@ export default {
         strapi.log.info('[ORDER] afterCreate fixed total to ' + mustBe);
       }
 
-      // пуш «создан»
-      try {
-        await sendPush('created', order);
-      } catch (e) {
-        strapi.log.error('[PUSH] afterCreate failed', e);
-      }
+      try { await sendPush('created', order); } catch (e) { strapi.log.error('[PUSH] afterCreate failed', e); }
 
-      event.result = order; // вернуть с populate
+      event.result = order;
     } catch (e) {
       strapi.log.error('[ORDER] afterCreate populate/total failed', e);
     }
   },
 
   async afterUpdate(event: AfterEvent) {
-    strapi.log.info('[TEST] afterUpdate(order) fired');
     let order: any = event.result;
     let prevStatus: string | undefined;
 
     try {
-      // достанем _prevStatus, который положили в beforeUpdate
       prevStatus = event?.params?.data?._prevStatus;
 
       order = asAny(await strapi.entityService.findOne('api::order.order', event.result.id, {
