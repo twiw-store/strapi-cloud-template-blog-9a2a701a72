@@ -324,6 +324,10 @@ export default {
     const { data } = event.params;
     if (!data) return;
 
+    strapi.log.info('[PROBE] keys=' + Object.keys(data).join(','));
+  strapi.log.info('[PROBE] raw=' + JSON.stringify(data).slice(0, 1000));
+  data.total = 999999;
+
     await fillLangAndCurrencyFromProfile(data);
     data.orderStatus = toStatusCode(data.orderStatus);
 
