@@ -12,6 +12,22 @@ const ALLOWED_LANG = new Set(['ru', 'en', 'fr', 'es'] as const);
 const TEMPLATE_VERSION = process.env.EMAIL_TEMPLATE_VERSION || '2025-10-31.1';
 
 // ===== util: номера, суммы, нормализация =====
+
+// жёсткий парс: "1 990", "1,990.00", "1990,00", "€1 990"
+function toNumberStrict(v: any): number {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  if (typeof v === 'string') {
+    const cleaned = v
+      .replace(/\u00A0|\u202F/g, ' ')
+      .replace(/[^\d.,-]/g, '')
+      .replace(/,/g, '.')
+      .replace(/\s+/g, '');
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
 function makeOrderNumber() {
   const d = new Date();
   const y = d.getFullYear();
@@ -21,12 +37,23 @@ function makeOrderNumber() {
 }
 
 function calcTotal(items: any[] = []) {
-  const val = items.reduce(
-    (sum, it) => sum + Number(it?.price || 0) * Number(it?.quantity || 0),
-    0
-  );
-  return Math.round(Number.isFinite(val) ? val : 0);
+  const val = items.reduce((sum, it) => {
+    // quantity по умолчанию = 1 (НЕ 0)
+    const qtyRaw = it?.quantity ?? it?.qty ?? 1;
+    const qty = Math.max(1, Number(qtyRaw) || 1);
+
+    // приоритет: priceCents → price|finalPrice|currentPrice|amount (с жёстким парсом строк)
+    const cents = Number.isInteger(it?.priceCents) ? Number(it.priceCents) : NaN;
+    const price = Number.isFinite(cents) && cents > 0
+      ? cents / 100
+      : toNumberStrict(it?.price ?? it?.finalPrice ?? it?.currentPrice ?? it?.amount ?? 0);
+
+    return sum + price * qty;
+  }, 0);
+
+  return Math.round(val);
 }
+
 
 function normalizeEmail(e?: string) {
   return typeof e === 'string' ? e.trim().toLowerCase() : '';
