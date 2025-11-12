@@ -38,7 +38,44 @@ function toStatusCode(raw?: string) {
   return ALLOWED_STATUS.has(s) ? s : 'pending';
 }
 
+// ✅ Исправленная версия — динамическая логика
 async function fillLangAndCurrencyFromProfile(data: any) {
+  // 1. Из payload (прямо из тела запроса)
+  if (data.language) data.language = String(data.language).toLowerCase();
+  if (data.currency) data.currency = String(data.currency).toUpperCase();
+
+  // 2. Из customer
+  if (!data.language && data?.customer?.language)
+    data.language = String(data.customer.language).toLowerCase();
+  if (!data.currency && data?.customer?.currency)
+    data.currency = String(data.customer.currency).toUpperCase();
+
+  // 3. Из пользователя
+  try {
+    let userId: string | number | undefined;
+    if (typeof data.user === 'number' || typeof data.user === 'string') userId = data.user;
+    else if (data?.user?.id) userId = data.user.id;
+    else if (Array.isArray(data?.user?.connect) && data.user.connect[0]?.id)
+      userId = data.user.connect[0].id;
+
+    if (userId) {
+      const user = await strapi.entityService.findOne(
+        'plugin::users-permissions.user',
+        Number(userId)
+      );
+      const u = user as any;
+      if (!data.language && u?.language)
+        data.language = String(u.language).toLowerCase();
+      if (!data.currency && u?.currency)
+        data.currency = String(u.currency).toUpperCase();
+      if (!data.customerEmail && u?.email)
+        data.customerEmail = u.email.toLowerCase();
+    }
+  } catch (e) {
+    strapi.log.warn('[ORDER] cannot resolve user lang/currency');
+  }
+
+  // 4. Дефолты
   if (!data.language) data.language = 'ru';
   if (!data.currency) data.currency = 'RUB';
 }
