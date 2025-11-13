@@ -21,11 +21,21 @@ function makeOrderNumber() {
   return `TWIW-${y}${m}${day}-${randomUUID().slice(0, 8).toUpperCase()}`;
 }
 
+// ⬇️ ГЛАВНАЯ ПРАВКА: calcTotal теперь уважает it.total, если он есть
 function calcTotal(items: any[] = []) {
-  const val = items.reduce(
-    (sum, it) => sum + Number(it?.price || 0) * Number(it?.quantity || 0),
-    0
-  );
+  const val = items.reduce((sum, it) => {
+    if (it && it.total != null && it.total !== '') {
+      const line = Number(it.total);
+      if (Number.isFinite(line)) return sum + line;
+    }
+
+    const price = Number(it?.price || 0);
+    const qty = Number(it?.quantity || 0);
+    const line = price * qty;
+    if (!Number.isFinite(line)) return sum;
+    return sum + line;
+  }, 0);
+
   return Math.round(Number.isFinite(val) ? val : 0);
 }
 
@@ -43,25 +53,45 @@ function toStatusCode(raw?: string) {
   return ALLOWED_STATUS.has(s) ? s : 'pending';
 }
 
-// ✅ твоя логика языка/валюты — вообще не трогаю
+// ✅ логика языка/валюты — аккуратно усиленная
 async function fillLangAndCurrencyFromProfile(data: any) {
-  // 1. Из payload (прямо из тела запроса)
-  if (data.language) data.language = String(data.language).toLowerCase();
-  if (data.currency) data.currency = String(data.currency).toUpperCase();
+  // 0. Собираем язык из возможных полей: language / lang / locale / customer.*
+  const rawLang =
+    data.language ||
+    data.lang ||
+    data.locale ||
+    (data.customer &&
+      (data.customer.language || data.customer.lang || data.customer.locale));
 
-  // 2. Из customer
-  if (!data.language && data?.customer?.language)
-    data.language = String(data.customer.language).toLowerCase();
-  if (!data.currency && data?.customer?.currency)
-    data.currency = String(data.customer.currency).toUpperCase();
+  if (rawLang) {
+    data.language = String(rawLang).toLowerCase();
+  }
 
-  // 3. Из пользователя
+  // 1. Собираем валюту из разных ключей:
+  // currency / selectedCurrency / currencyCode / customer.currency / customerCurrency / customer.selectedCurrency
+  const rawCurrency =
+    data.currency ||
+    data.selectedCurrency ||
+    data.currencyCode ||
+    (data.customer &&
+      (data.customer.currency ||
+        data.customerCurrency ||
+        data.customer.selectedCurrency));
+
+  if (rawCurrency) {
+    data.currency = String(rawCurrency).toUpperCase();
+  }
+
+  // 2. Если не пришло из тела — пробуем взять из пользователя
   try {
     let userId: string | number | undefined;
-    if (typeof data.user === 'number' || typeof data.user === 'string') userId = data.user;
-    else if (data?.user?.id) userId = data.user.id;
-    else if (Array.isArray(data?.user?.connect) && data.user.connect[0]?.id)
+    if (typeof data.user === 'number' || typeof data.user === 'string') {
+      userId = data.user;
+    } else if (data?.user?.id) {
+      userId = data.user.id;
+    } else if (Array.isArray(data?.user?.connect) && data.user.connect[0]?.id) {
       userId = data.user.connect[0].id;
+    }
 
     if (userId) {
       const user = await strapi.entityService.findOne(
@@ -69,17 +99,34 @@ async function fillLangAndCurrencyFromProfile(data: any) {
         Number(userId)
       );
       const u = user as any;
-      if (!data.language && u?.language) data.language = String(u.language).toLowerCase();
-      if (!data.currency && u?.currency) data.currency = String(u.currency).toUpperCase();
-      if (!data.customerEmail && u?.email) data.customerEmail = u.email.toLowerCase();
+
+      if (!data.language && u?.language) {
+        data.language = String(u.language).toLowerCase();
+      }
+      if (!data.currency && u?.currency) {
+        data.currency = String(u.currency).toUpperCase();
+      }
+      if (!data.customerEmail && u?.email) {
+        data.customerEmail = u.email.toLowerCase();
+      }
     }
   } catch (e) {
     strapi.log.warn('[ORDER] cannot resolve user lang/currency');
   }
 
-  // 4. Дефолты
+  // 3. Жёсткие дефолты, чтобы в заказе ВСЕГДА были значения
   if (!data.language) data.language = 'ru';
-  if (!data.currency) data.currency = 'RUB';
+
+  if (!data.currency) {
+    data.currency = 'RUB';
+  } else {
+    // на всякий случай нормализуем формат: 3 буквы, верхний регистр
+    data.currency = String(data.currency).toUpperCase().slice(0, 3);
+  }
+
+  strapi.log.info(
+    `[ORDER] fillLangAndCurrencyFromProfile → language=${data.language}, currency=${data.currency}`
+  );
 }
 
 // ========== ДОП. УТИЛЫ ДЛЯ ПИСЕМ (НЕ ЛОМАЮТ ТВОЮ ЛОГИКУ) ==========
@@ -323,7 +370,9 @@ async function sendBothEmails(order: any) {
       )}`,
       html,
     });
-    strapi.log.info(`[EMAIL→CLIENT] ok to=${clientTo} messageId=${(res1 as any)?.messageId ?? '-'}`);
+    strapi.log.info(
+      `[EMAIL→CLIENT] ok to=${clientTo} messageId=${(res1 as any)?.messageId ?? '-'}`
+    );
   } else {
     strapi.log.warn(`[EMAIL→CLIENT] skip: empty customerEmail for ${order.orderNumber}`);
   }
@@ -372,7 +421,7 @@ async function sendBothEmails(order: any) {
   }
 }
 
-// ========== LIFECYCLES С ТВОЕЙ РАБОЧЕЙ ЛОГИКОЙ TOTAL ==========
+// ========== LIFECYCLES С ТВОЕЙ ЛОГИКОЙ TOTAL ==========
 
 export default {
   async beforeCreate(event: BeforeEvent) {
