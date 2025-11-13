@@ -11,7 +11,7 @@ const ALLOWED_LANG = new Set(['ru', 'en', 'fr', 'es'] as const);
 // Версия шаблона для писем (для кэш-бастинга)
 const TEMPLATE_VERSION = process.env.EMAIL_TEMPLATE_VERSION || '2025-10-31.1';
 
-// ========== БАЗОВЫЕ УТИЛИТЫ (КАК У ТЕБЯ В РАБОЧЕМ КОДЕ) ==========
+// ========== БАЗОВЫЕ УТИЛИТЫ ==========
 
 function makeOrderNumber() {
   const d = new Date();
@@ -21,11 +21,21 @@ function makeOrderNumber() {
   return `TWIW-${y}${m}${day}-${randomUUID().slice(0, 8).toUpperCase()}`;
 }
 
+// calcTotal уважает и it.total (если фронт уже посчитал), и price*quantity
 function calcTotal(items: any[] = []) {
-  const val = items.reduce(
-    (sum, it) => sum + Number(it?.price || 0) * Number(it?.quantity || 0),
-    0
-  );
+  const val = items.reduce((sum, it) => {
+    if (it && it.total != null && it.total !== '') {
+      const line = Number(it.total);
+      if (Number.isFinite(line)) return sum + line;
+    }
+
+    const price = Number(it?.price || 0);
+    const qty = Number(it?.quantity || 0);
+    const line = price * qty;
+    if (!Number.isFinite(line)) return sum;
+    return sum + line;
+  }, 0);
+
   return Math.round(Number.isFinite(val) ? val : 0);
 }
 
@@ -43,79 +53,13 @@ function toStatusCode(raw?: string) {
   return ALLOWED_STATUS.has(s) ? s : 'pending';
 }
 
-// ✅ твоя логика языка/валюты — только аккуратно расширена под aliases
-async function fillLangAndCurrencyFromProfile(data: any) {
-  // 1. ЯЗЫК из payload
-  if (data.language) {
-    data.language = String(data.language).toLowerCase();
-  }
-
-  // 1b. ВАЛЮТА: сначала пробуем взять из aliases, если currency ещё не задана
-  if (!data.currency && data.selectedCurrency) {
-    data.currency = String(data.selectedCurrency).toUpperCase();
-  }
-  if (!data.currency && data.currencyCode) {
-    data.currency = String(data.currencyCode).toUpperCase();
-  }
-
-  // если currency уже есть (из тела запроса) — просто нормализуем
-  if (data.currency) {
-    data.currency = String(data.currency).toUpperCase();
-  }
-
-  // 2. Из customer (язык + валюта/selectedCurrency), если сверху ничего не пришло
-  if (!data.language && data?.customer?.language)
-    data.language = String(data.customer.language).toLowerCase();
-
-  if (!data.currency && data?.customer?.currency)
-    data.currency = String(data.customer.currency).toUpperCase();
-
-  if (!data.currency && data?.customer?.selectedCurrency)
-    data.currency = String(data.customer.selectedCurrency).toUpperCase();
-
-  // 3. Из пользователя
-  try {
-    let userId: string | number | undefined;
-    if (typeof data.user === 'number' || typeof data.user === 'string') userId = data.user;
-    else if (data?.user?.id) userId = data.user.id;
-    else if (Array.isArray(data?.user?.connect) && data.user.connect[0]?.id)
-      userId = data.user.connect[0].id;
-
-    if (userId) {
-      const user = await strapi.entityService.findOne(
-        'plugin::users-permissions.user',
-        Number(userId)
-      );
-      const u = user as any;
-      if (!data.language && u?.language)
-        data.language = String(u.language).toLowerCase();
-      if (!data.currency && u?.currency)
-        data.currency = String(u.currency).toUpperCase();
-      if (!data.customerEmail && u?.email)
-        data.customerEmail = u.email.toLowerCase();
-    }
-  } catch (e) {
-    strapi.log.warn('[ORDER] cannot resolve user lang/currency');
-  }
-
-  // 4. Дефолты
-  if (!data.language) data.language = 'ru';
-  if (!data.currency) data.currency = 'RUB';
-
-  strapi.log.info(
-    `[ORDER] fillLangAndCurrencyFromProfile → language=${data.language}, currency=${data.currency}`
-  );
-}
-
-// ========== ДОП. УТИЛЫ ДЛЯ ПИСЕМ (НЕ ЛОМАЮТ ТВОЮ ЛОГИКУ) ==========
-
 function normalizeLang(raw?: string) {
   const s = String(raw ?? '').trim().toLowerCase();
-  if (!s) return 'ru';
+  if (!s) return undefined;
   const base = s.split(/[-_]/)[0]; // ru-RU → ru
   if (ALLOWED_LANG.has(base as any)) return base as 'ru' | 'en' | 'fr' | 'es';
   if (ALLOWED_LANG.has(s as any)) return s as 'ru' | 'en' | 'fr' | 'es';
-  return 'ru';
+  return undefined;
 }
 
 function fmtCurrency(amount: number, currency = 'RUB', lang: 'ru' | 'en' | 'fr' | 'es' = 'ru') {
@@ -132,8 +76,81 @@ function fmtCurrency(amount: number, currency = 'RUB', lang: 'ru' | 'en' | 'fr' 
   }
 }
 
+// ✅ язык / валюта — аккуратная логика, БЕЗ жёстких RU/RUB по умолчанию
+async function fillLangAndCurrencyFromProfile(data: any) {
+  // 1. Пытаемся достать язык из разных полей
+  const langFromPayload =
+    data.language ||
+    data.lang ||
+    data.locale ||
+    (data.customer &&
+      (data.customer.language || data.customer.lang || data.customer.locale));
+
+  const normalizedLang = normalizeLang(langFromPayload);
+  if (normalizedLang) {
+    data.language = normalizedLang;
+  }
+
+  // 2. Пытаемся достать валюту из разных полей
+  const currencyFromPayload =
+    data.currency ||
+    data.selectedCurrency ||
+    data.currencyCode ||
+    (data.customer &&
+      (data.customer.currency ||
+        data.customerCurrency ||
+        data.customer.selectedCurrency));
+
+  if (currencyFromPayload) {
+    data.currency = String(currencyFromPayload).toUpperCase().slice(0, 3);
+  }
+
+  // 3. Если всё ещё нет языка/валюты — пробуем взять из пользователя
+  try {
+    let userId: string | number | undefined;
+    if (typeof data.user === 'number' || typeof data.user === 'string') {
+      userId = data.user;
+    } else if (data?.user?.id) {
+      userId = data.user.id;
+    } else if (Array.isArray(data?.user?.connect) && data.user.connect[0]?.id) {
+      userId = data.user.connect[0].id;
+    }
+
+    if (userId) {
+      const user = await strapi.entityService.findOne(
+        'plugin::users-permissions.user',
+        Number(userId)
+      );
+      const u = user as any;
+
+      if (!data.language && u?.language) {
+        const fromUserLang = normalizeLang(u.language);
+        if (fromUserLang) data.language = fromUserLang;
+      }
+      if (!data.currency && u?.currency) {
+        data.currency = String(u.currency).toUpperCase().slice(0, 3);
+      }
+      if (!data.customerEmail && u?.email) {
+        data.customerEmail = u.email.toLowerCase();
+      }
+    }
+  } catch (e) {
+    strapi.log.warn('[ORDER] cannot resolve user lang/currency');
+  }
+
+  // ⚠️ ВАЖНО: БОЛЬШЕ НИКАКИХ дефолтов RU/RUB
+  // Пусть язык/валюта будут undefined, если никто их не передал / не сохранил.
+  // Письма всё равно форматируем с order.currency || 'RUB' ниже.
+
+  strapi.log.info(
+    `[ORDER] fillLangAndCurrencyFromProfile → language=${data.language || '-'}, currency=${data.currency || '-'}`
+  );
+}
+
+// ========== EMAIL HTML ==========
+
 function renderOrderEmailHtml(order: any) {
-  const lang = normalizeLang(order?.language);
+  const lang = normalizeLang(order?.language) || 'ru';
   const t = {
     ru: {
       thanks: 'Спасибо за заказ!',
@@ -325,7 +342,7 @@ async function sendBothEmails(order: any) {
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
   const replyTo = process.env.SMTP_REPLY_TO || from;
 
-  const lang = normalizeLang(order?.language);
+  const lang = normalizeLang(order?.language) || 'ru';
   const subjects = {
     ru: `TWIW: заказ №${order.orderNumber} оплачен`,
     en: `TWIW: order #${order.orderNumber} paid`,
@@ -348,7 +365,9 @@ async function sendBothEmails(order: any) {
       )}`,
       html,
     });
-    strapi.log.info(`[EMAIL→CLIENT] ok to=${clientTo} messageId=${(res1 as any)?.messageId ?? '-'}`);
+    strapi.log.info(
+      `[EMAIL→CLIENT] ok to=${clientTo} messageId=${(res1 as any)?.messageId ?? '-'}`
+    );
   } else {
     strapi.log.warn(`[EMAIL→CLIENT] skip: empty customerEmail for ${order.orderNumber}`);
   }
@@ -397,7 +416,7 @@ async function sendBothEmails(order: any) {
   }
 }
 
-// ========== LIFECYCLES С ТВОЕЙ РАБОЧЕЙ ЛОГИКОЙ TOTAL ==========
+// ========== LIFECYCLES ==========
 
 export default {
   async beforeCreate(event: BeforeEvent) {
