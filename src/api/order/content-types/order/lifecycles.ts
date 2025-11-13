@@ -1,3 +1,4 @@
+// src/api/order/content-types/order/lifecycles.ts
 import { randomUUID } from 'node:crypto';
 
 type BeforeEvent = { params: { data: Record<string, any>; where?: any } };
@@ -7,10 +8,11 @@ const asAny = (v: any) => v as any;
 const ALLOWED_STATUS = new Set(['pending', 'paid', 'shipped', 'delivered', 'cancelled']);
 const ALLOWED_LANG = new Set(['ru', 'en', 'fr', 'es'] as const);
 
-// Версия шаблона для кэш-бастинга у почтовиков
+// Версия шаблона для писем (для кэш-бастинга)
 const TEMPLATE_VERSION = process.env.EMAIL_TEMPLATE_VERSION || '2025-10-31.1';
 
-// ================== УТИЛЫ: НОМЕР, СУММА, СТАТУС ==================
+// ========== БАЗОВЫЕ УТИЛИТЫ (КАК У ТЕБЯ В РАБОЧЕМ КОДЕ) ==========
+
 function makeOrderNumber() {
   const d = new Date();
   const y = d.getFullYear();
@@ -41,7 +43,7 @@ function toStatusCode(raw?: string) {
   return ALLOWED_STATUS.has(s) ? s : 'pending';
 }
 
-// ================== ЯЗЫК/ВАЛЮТА (КАК В РАБОЧЕЙ ВЕРСИИ) ==================
+// ✅ твоя логика языка/валюты — вообще не трогаю
 async function fillLangAndCurrencyFromProfile(data: any) {
   // 1. Из payload (прямо из тела запроса)
   if (data.language) data.language = String(data.language).toLowerCase();
@@ -80,13 +82,12 @@ async function fillLangAndCurrencyFromProfile(data: any) {
   if (!data.currency) data.currency = 'RUB';
 }
 
-// ================== ДЛЯ ПИСЕМ (ФОРМАТЫ, ТЕКСТЫ, HTML) ==================
+// ========== ДОП. УТИЛЫ ДЛЯ ПИСЕМ (НЕ ЛОМАЮТ ТВОЮ ЛОГИКУ) ==========
+
 function normalizeLang(raw?: string) {
   const s = String(raw ?? '').trim().toLowerCase();
   if (!s) return 'ru';
-
-  // поддержка ru-RU / en-US и т.п.
-  const base = s.split(/[-_]/)[0];
+  const base = s.split(/[-_]/)[0]; // ru-RU → ru
   if (ALLOWED_LANG.has(base as any)) return base as 'ru' | 'en' | 'fr' | 'es';
   if (ALLOWED_LANG.has(s as any)) return s as 'ru' | 'en' | 'fr' | 'es';
   return 'ru';
@@ -286,15 +287,14 @@ function renderOrderEmailHtml(order: any) {
 </html>`;
 }
 
-// ================== ОТПРАВКА ПИСЕМ ==================
 async function sendBothEmails(order: any) {
   const plugin = strapi.plugin('email');
   if (!plugin) {
     strapi.log.warn('[EMAIL] email plugin not installed/configured');
     return;
   }
-
   const emailSvc = plugin.service('email');
+
   const clientTo = normalizeEmail(order.customerEmail);
   const adminTo = normalizeEmail(process.env.ORDER_NOTIFY_EMAIL || '');
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
@@ -372,123 +372,8 @@ async function sendBothEmails(order: any) {
   }
 }
 
-// ================== PUSH ==================
-function pushOrderText(
-  kind: 'created' | 'paid' | 'shipped' | 'delivered',
-  lang?: string,
-  n?: string
-) {
-  const L = (lang || 'en').toLowerCase();
-  const pick = (dict: any) => dict[L] || dict.en;
-  const title = pick({
-    ru: {
-      created: 'Заказ принят',
-      paid: 'Оплата подтверждена',
-      shipped: 'Заказ отправлен',
-      delivered: 'Заказ доставлен',
-    },
-    en: {
-      created: 'Order received',
-      paid: 'Payment confirmed',
-      shipped: 'Order shipped',
-      delivered: 'Delivered',
-    },
-    fr: {
-      created: 'Commande reçue',
-      paid: 'Paiement confirmé',
-      shipped: 'Commande expédiée',
-      delivered: 'Livré',
-    },
-    es: {
-      created: 'Pedido recibido',
-      paid: 'Pago confirmado',
-      shipped: 'Pedido enviado',
-      delivered: 'Entregado',
-    },
-  })[kind];
+// ========== LIFECYCLES С ТВОЕЙ РАБОЧЕЙ ЛОГИКОЙ TOTAL ==========
 
-  const body = pick({
-    ru: {
-      created: (x: string) => `Ваш заказ №${x} оформлен. Мы уже собираем его.`,
-      paid: (x: string) => `Оплата заказа №${x} прошла успешно.`,
-      shipped: (x: string) => `Заказ №${x} передан службе доставки.`,
-      delivered: (x: string) => `Заказ №${x} доставлен. Спасибо, что с TWIW.`,
-    },
-    en: {
-      created: (x: string) => `Your order #${x} has been placed.`,
-      paid: (x: string) => `Order #${x} payment confirmed.`,
-      shipped: (x: string) => `Order #${x} has been shipped.`,
-      delivered: (x: string) => `Order #${x} has been delivered.`,
-    },
-    fr: {
-      created: (x: string) => `Votre commande n°${x} a été passée.`,
-      paid: (x: string) => `Paiement de la commande n°${x} confirmé.`,
-      shipped: (x: string) => `La commande n°${x} a été expédiée.`,
-      delivered: (x: string) => `La commande n°${x} a été livrée.`,
-    },
-    es: {
-      created: (x: string) => `Tu pedido #${x} ha sido realizado.`,
-      paid: (x: string) => `Pago del pedido #${x} confirmado.`,
-      shipped: (x: string) => `El pedido #${x} ha sido enviado.`,
-      delivered: (x: string) => `El pedido #${x} ha sido entregado.`,
-    },
-  })[kind](n || '');
-  return { title, body };
-}
-
-const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
-
-async function findUserDeviceTokens(userId?: number | string | null) {
-  try {
-    if (!userId) return [];
-    const rows = await strapi.db.query('api::push-device.push-device').findMany({
-      where: { userId: String(userId) },
-      select: ['token', 'lang', 'marketingOptIn'],
-      limit: 1000,
-    });
-    return (rows || [])
-      .filter((r: any) => r?.token?.startsWith('ExponentPushToken['))
-      .map((r: any) => ({ token: r.token, lang: r.lang || 'en' }));
-  } catch (e) {
-    strapi.log.warn('[PUSH] table push-device not found or query failed');
-    return [];
-  }
-}
-
-async function sendPush(kind: 'created' | 'paid' | 'shipped' | 'delivered', order: any) {
-  const userId = order?.customer?.id || order?.user?.id || order?.userId || null;
-  const lang = order?.language || order?.locale || 'en';
-  const orderNumber = order?.orderNumber || String(order?.id);
-  const devices = await findUserDeviceTokens(userId);
-  if (!devices.length) return;
-
-  const { title, body } = pushOrderText(kind, lang, orderNumber);
-  const messages = devices.map((d) => ({
-    to: d.token,
-    title,
-    body,
-    data: { screen: 'OrderDetails', orderId: order?.id, orderNumber },
-    sound: 'default',
-    priority: 'high',
-    ttl: 3600 * 24 * 7,
-  }));
-
-  for (let i = 0; i < messages.length; i += 100) {
-    const chunk = messages.slice(i, i + 100);
-    try {
-      const res = await fetch(EXPO_PUSH_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(chunk),
-      });
-      await res.text().catch(() => null);
-    } catch (e) {
-      strapi.log.error('[PUSH] send failed', e);
-    }
-  }
-}
-
-// ================== LIFECYCLES (TOTAL — КАК В РАБОЧЕМ ВАРИАНТЕ) ==================
 export default {
   async beforeCreate(event: BeforeEvent) {
     strapi.log.info('[ORDER] beforeCreate fired');
@@ -553,7 +438,7 @@ export default {
     try {
       const order = asAny(
         await strapi.entityService.findOne('api::order.order', event.result.id, {
-          populate: { Item: true, user: true, customer: true },
+          populate: { Item: true },
         })
       );
 
@@ -566,13 +451,6 @@ export default {
         });
         order.total = mustBe;
         strapi.log.info('[ORDER] afterCreate fixed total to ' + mustBe);
-      }
-
-      // пуш "создан"
-      try {
-        await sendPush('created', order);
-      } catch (e) {
-        strapi.log.error('[PUSH] afterCreate failed', e);
       }
 
       event.result = order;
@@ -588,7 +466,7 @@ export default {
     try {
       order = asAny(
         await strapi.entityService.findOne('api::order.order', event.result.id, {
-          populate: { Item: true, user: true, customer: true },
+          populate: { Item: true },
         })
       );
 
@@ -603,14 +481,11 @@ export default {
         strapi.log.info('[ORDER] afterUpdate fixed total to ' + mustBe);
       }
     } catch (e) {
-      strapi.log.error('[ORDER] afterUpdate total fix failed', e);
+      strapi.log.error('[ORDER] afterUpdate failed', e);
       order = event.result;
     }
 
-    const prevStatus: string | undefined = (event?.params?.data as any)?._prevStatus;
-    const nextStatus = String(order?.orderStatus || '');
-
-    // письма при paid, если ещё не отправляли
+    // ✉️ ПИСЬМО: когда статус = paid и email ещё не отправляли
     try {
       if (order.orderStatus === 'paid' && !order.emailSentAt) {
         await sendBothEmails(order);
@@ -623,17 +498,6 @@ export default {
       }
     } catch (e) {
       strapi.log.error('[EMAIL] send failed', e);
-    }
-
-    // пуши по смене статуса
-    try {
-      if (prevStatus !== nextStatus) {
-        if (nextStatus === 'paid') await sendPush('paid', order);
-        else if (nextStatus === 'shipped') await sendPush('shipped', order);
-        else if (nextStatus === 'delivered') await sendPush('delivered', order);
-      }
-    } catch (e) {
-      strapi.log.error('[PUSH] afterUpdate failed', e);
     }
 
     event.result = order;
