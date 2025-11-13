@@ -10,7 +10,7 @@ const ALLOWED_LANG = new Set(['ru', 'en', 'fr', 'es'] as const);
 // Версия шаблона для кэш-бастинга у почтовиков
 const TEMPLATE_VERSION = process.env.EMAIL_TEMPLATE_VERSION || '2025-10-31.1';
 
-// ===== util: номера, суммы, нормализация =====
+// ================== УТИЛЫ: НОМЕР, СУММА, СТАТУС ==================
 function makeOrderNumber() {
   const d = new Date();
   const y = d.getFullYear();
@@ -24,8 +24,7 @@ function calcTotal(items: any[] = []) {
     (sum, it) => sum + Number(it?.price || 0) * Number(it?.quantity || 0),
     0
   );
-  const normalized = Number.isFinite(val) ? val : 0;
-  return Math.round(normalized);
+  return Math.round(Number.isFinite(val) ? val : 0);
 }
 
 function normalizeEmail(e?: string) {
@@ -42,26 +41,58 @@ function toStatusCode(raw?: string) {
   return ALLOWED_STATUS.has(s) ? s : 'pending';
 }
 
-// 🔥 ВАЖНО: поддержка 'ru-RU', 'en-US' и т.п.
+// ================== ЯЗЫК/ВАЛЮТА (КАК В РАБОЧЕЙ ВЕРСИИ) ==================
+async function fillLangAndCurrencyFromProfile(data: any) {
+  // 1. Из payload (прямо из тела запроса)
+  if (data.language) data.language = String(data.language).toLowerCase();
+  if (data.currency) data.currency = String(data.currency).toUpperCase();
+
+  // 2. Из customer
+  if (!data.language && data?.customer?.language)
+    data.language = String(data.customer.language).toLowerCase();
+  if (!data.currency && data?.customer?.currency)
+    data.currency = String(data.customer.currency).toUpperCase();
+
+  // 3. Из пользователя
+  try {
+    let userId: string | number | undefined;
+    if (typeof data.user === 'number' || typeof data.user === 'string') userId = data.user;
+    else if (data?.user?.id) userId = data.user.id;
+    else if (Array.isArray(data?.user?.connect) && data.user.connect[0]?.id)
+      userId = data.user.connect[0].id;
+
+    if (userId) {
+      const user = await strapi.entityService.findOne(
+        'plugin::users-permissions.user',
+        Number(userId)
+      );
+      const u = user as any;
+      if (!data.language && u?.language) data.language = String(u.language).toLowerCase();
+      if (!data.currency && u?.currency) data.currency = String(u.currency).toUpperCase();
+      if (!data.customerEmail && u?.email) data.customerEmail = u.email.toLowerCase();
+    }
+  } catch (e) {
+    strapi.log.warn('[ORDER] cannot resolve user lang/currency');
+  }
+
+  // 4. Дефолты
+  if (!data.language) data.language = 'ru';
+  if (!data.currency) data.currency = 'RUB';
+}
+
+// ================== ДЛЯ ПИСЕМ (ФОРМАТЫ, ТЕКСТЫ, HTML) ==================
 function normalizeLang(raw?: string) {
   const s = String(raw ?? '').trim().toLowerCase();
   if (!s) return 'ru';
 
-  // ru-RU / en-US / fr_FR → ru / en / fr
+  // поддержка ru-RU / en-US и т.п.
   const base = s.split(/[-_]/)[0];
   if (ALLOWED_LANG.has(base as any)) return base as 'ru' | 'en' | 'fr' | 'es';
-
-  // если вдруг пришло уже 'ru', 'en' и т.п.
   if (ALLOWED_LANG.has(s as any)) return s as 'ru' | 'en' | 'fr' | 'es';
-
   return 'ru';
 }
 
-function fmtCurrency(
-  amount: number,
-  currency = 'RUB',
-  lang: 'ru' | 'en' | 'fr' | 'es' = 'ru'
-) {
+function fmtCurrency(amount: number, currency = 'RUB', lang: 'ru' | 'en' | 'fr' | 'es' = 'ru') {
   const locales: Record<typeof lang, string> = {
     ru: 'ru-RU',
     en: 'en-US',
@@ -75,91 +106,6 @@ function fmtCurrency(
   }
 }
 
-/**
- * 1) Забираем language/currency/email из payload
- * 2) Если есть customer — добираем оттуда
- * 3) Если есть user — читаем профиль и:
- *    - докидываем недостающие данные в order
- *    - при необходимости обновляем профиль (чтобы язык кабинета совпадал)
- * 4) Дефолты: ru / RUB
- */
-async function fillLangAndCurrencyFromProfile(data: any) {
-  // 1. Прямо из тела запроса
-  if (data.language) data.language = normalizeLang(data.language);
-  if (data.currency) data.currency = String(data.currency).toUpperCase();
-
-  if (!data.customerEmail && data.email) {
-    data.customerEmail = normalizeEmail(data.email);
-  }
-
-  // 2. Из customer
-  if (!data.language && data?.customer?.language) {
-    data.language = normalizeLang(data.customer.language);
-  }
-  if (!data.currency && data?.customer?.currency) {
-    data.currency = String(data.customer.currency).toUpperCase();
-  }
-  if (!data.customerEmail && data?.customer?.email) {
-    data.customerEmail = normalizeEmail(data.customer.email);
-  }
-
-  // 3. Из пользователя
-  let userId: number | undefined;
-  try {
-    if (typeof data.user === 'number' || typeof data.user === 'string') {
-      userId = Number(data.user);
-    } else if (data?.user?.id) {
-      userId = Number(data.user.id);
-    } else if (Array.isArray(data?.user?.connect) && data.user.connect[0]?.id) {
-      userId = Number(data.user.connect[0].id);
-    }
-
-    if (userId) {
-      const user = await strapi.entityService.findOne(
-        'plugin::users-permissions.user',
-        Number(userId)
-      );
-      const u = user as any;
-
-      if (!data.language && typeof u?.language === 'string') {
-        data.language = normalizeLang(u.language);
-      }
-      if (!data.currency && typeof u?.currency === 'string') {
-        data.currency = String(u.currency).toUpperCase();
-      }
-      if (!data.customerEmail && typeof u?.email === 'string') {
-        data.customerEmail = normalizeEmail(u.email);
-      }
-
-      // 🔥 Синхронизируем язык/валюту обратно в профиль клиента,
-      // чтобы "язык кабинета" всегда совпадал с тем, что летит с фронта.
-      const patch: any = {};
-      if (data.language && data.language !== normalizeLang(u?.language)) {
-        patch.language = data.language;
-      }
-      if (data.currency && data.currency !== String(u?.currency || '').toUpperCase()) {
-        patch.currency = data.currency;
-      }
-
-      if (Object.keys(patch).length > 0) {
-        await strapi.entityService.update('plugin::users-permissions.user', Number(userId), {
-          data: patch,
-        });
-        strapi.log.info(
-          `[ORDER] synced user profile ${userId} lang=${patch.language || u?.language} currency=${patch.currency || u?.currency}`
-        );
-      }
-    }
-  } catch (e) {
-    strapi.log.warn('[ORDER] cannot resolve/sync user language/currency from profile');
-  }
-
-  // 4. Дефолты
-  if (!data.language) data.language = 'ru';
-  if (!data.currency) data.currency = 'RUB';
-}
-
-// ====== EMAIL HTML ======
 function renderOrderEmailHtml(order: any) {
   const lang = normalizeLang(order?.language);
   const t = {
@@ -340,15 +286,15 @@ function renderOrderEmailHtml(order: any) {
 </html>`;
 }
 
-// ===== EMAIL send (клиент + админ) =====
+// ================== ОТПРАВКА ПИСЕМ ==================
 async function sendBothEmails(order: any) {
   const plugin = strapi.plugin('email');
   if (!plugin) {
     strapi.log.warn('[EMAIL] email plugin not installed/configured');
     return;
   }
-  const emailSvc = plugin.service('email');
 
+  const emailSvc = plugin.service('email');
   const clientTo = normalizeEmail(order.customerEmail);
   const adminTo = normalizeEmail(process.env.ORDER_NOTIFY_EMAIL || '');
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
@@ -362,7 +308,7 @@ async function sendBothEmails(order: any) {
     es: `TWIW: pedido nº${order.orderNumber} pagado`,
   } as const;
 
-  // клиенту HTML
+  // клиенту
   if (clientTo) {
     const html = renderOrderEmailHtml(order);
     const res1 = await emailSvc.send({
@@ -382,16 +328,17 @@ async function sendBothEmails(order: any) {
     strapi.log.warn(`[EMAIL→CLIENT] skip: empty customerEmail for ${order.orderNumber}`);
   }
 
-  // админу — текстовый дайджест
+  // админу
   if (adminTo) {
     const items = Array.isArray(order?.Item) ? order.Item : [];
     const lines = items
-      .map((it: any) =>
-        `• ${it?.name || it?.title || 'Товар'} × ${Number(it?.quantity || 1)} = ${fmtCurrency(
-          Number(it?.price || 0) * Number(it?.quantity || 1),
-          order.currency || 'RUB',
-          lang
-        )}`
+      .map(
+        (it: any) =>
+          `• ${it?.name || it?.title || 'Товар'} × ${Number(it?.quantity || 1)} = ${fmtCurrency(
+            Number(it?.price || 0) * Number(it?.quantity || 1),
+            order.currency || 'RUB',
+            lang
+          )}`
       )
       .join('\n');
 
@@ -414,7 +361,7 @@ async function sendBothEmails(order: any) {
     strapi.log.warn('[EMAIL→ADMIN] skip: ORDER_NOTIFY_EMAIL not set');
   }
 
-  // помечаем, что письмо отправлено (идемпотентно)
+  // помечаем, что письмо отправлено
   try {
     await strapi.entityService.update('api::order.order', order.id, {
       data: { emailSentAt: new Date() },
@@ -425,7 +372,7 @@ async function sendBothEmails(order: any) {
   }
 }
 
-// ===== PUSH TEMPLATES =====
+// ================== PUSH ==================
 function pushOrderText(
   kind: 'created' | 'paid' | 'shipped' | 'delivered',
   lang?: string,
@@ -489,7 +436,6 @@ function pushOrderText(
   return { title, body };
 }
 
-// ===== PUSH send =====
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
 async function findUserDeviceTokens(userId?: number | string | null) {
@@ -542,7 +488,7 @@ async function sendPush(kind: 'created' | 'paid' | 'shipped' | 'delivered', orde
   }
 }
 
-// ===== LIFECYCLES =====
+// ================== LIFECYCLES (TOTAL — КАК В РАБОЧЕМ ВАРИАНТЕ) ==================
 export default {
   async beforeCreate(event: BeforeEvent) {
     strapi.log.info('[ORDER] beforeCreate fired');
@@ -551,23 +497,21 @@ export default {
 
     await fillLangAndCurrencyFromProfile(data);
     data.orderStatus = toStatusCode(data.orderStatus);
-
-    if (!data.orderNumber || data.orderNumber === '-' || data.orderNumber === '') {
-      data.orderNumber = makeOrderNumber();
-    }
+    if (!data.orderNumber) data.orderNumber = makeOrderNumber();
 
     const items = Array.isArray(data.Item)
       ? data.Item
       : Array.isArray(data.items)
       ? data.items
       : [];
+
     if (items.length) {
+      items.forEach((i) => {
+        i.price = Number(i.price) || 0;
+        i.quantity = Number(i.quantity) || 0;
+      });
       data.total = calcTotal(items);
     }
-
-    strapi.log.info(
-      `[ORDER] beforeCreate lang=${data.language} currency=${data.currency} total=${data.total}`
-    );
   },
 
   async beforeUpdate(event: BeforeEvent) {
@@ -575,37 +519,33 @@ export default {
     const { data, where } = event.params;
     if (!data) return;
 
-    try {
-      const id = Number(where?.id || data?.id);
-      if (id) {
+    const id = Number(where?.id || data?.id);
+    if (id) {
+      try {
         const prev = await strapi.entityService.findOne('api::order.order', id, {
           fields: ['orderStatus'],
         });
         if (prev?.orderStatus) (data as any)._prevStatus = String(prev.orderStatus);
-      }
-    } catch (e) {
-      strapi.log.warn('[ORDER] cannot get previous orderStatus');
+      } catch {}
     }
 
     await fillLangAndCurrencyFromProfile(data);
     if ('orderStatus' in data) data.orderStatus = toStatusCode(data.orderStatus);
-
-    if (!data.orderNumber || data.orderNumber === '-' || data.orderNumber === '') {
-      data.orderNumber = makeOrderNumber();
-    }
+    if (!data.orderNumber) data.orderNumber = makeOrderNumber();
 
     const items = Array.isArray(data.Item)
       ? data.Item
       : Array.isArray(data.items)
       ? data.items
       : [];
+
     if (items.length) {
+      items.forEach((i) => {
+        i.price = Number(i.price) || 0;
+        i.quantity = Number(i.quantity) || 0;
+      });
       data.total = calcTotal(items);
     }
-
-    strapi.log.info(
-      `[ORDER] beforeUpdate lang=${data.language} currency=${data.currency} total=${data.total}`
-    );
   },
 
   async afterCreate(event: AfterEvent) {
@@ -628,6 +568,7 @@ export default {
         strapi.log.info('[ORDER] afterCreate fixed total to ' + mustBe);
       }
 
+      // пуш "создан"
       try {
         await sendPush('created', order);
       } catch (e) {
@@ -636,18 +577,15 @@ export default {
 
       event.result = order;
     } catch (e) {
-      strapi.log.error('[ORDER] afterCreate populate/total failed', e);
+      strapi.log.error('[ORDER] afterCreate failed', e);
     }
   },
 
   async afterUpdate(event: AfterEvent) {
     strapi.log.info('[ORDER] afterUpdate fired');
-    let order: any = event.result;
-    let prevStatus: string | undefined;
+    let order: any;
 
     try {
-      prevStatus = event?.params?.data?._prevStatus;
-
       order = asAny(
         await strapi.entityService.findOne('api::order.order', event.result.id, {
           populate: { Item: true, user: true, customer: true },
@@ -666,9 +604,13 @@ export default {
       }
     } catch (e) {
       strapi.log.error('[ORDER] afterUpdate total fix failed', e);
+      order = event.result;
     }
 
-    // письма — только при paid и если ещё не отправляли
+    const prevStatus: string | undefined = (event?.params?.data as any)?._prevStatus;
+    const nextStatus = String(order?.orderStatus || '');
+
+    // письма при paid, если ещё не отправляли
     try {
       if (order.orderStatus === 'paid' && !order.emailSentAt) {
         await sendBothEmails(order);
@@ -685,12 +627,10 @@ export default {
 
     // пуши по смене статуса
     try {
-      const next = String(order?.orderStatus || '');
-      const prev = String(prevStatus || '');
-      if (prev !== next) {
-        if (next === 'paid') await sendPush('paid', order);
-        else if (next === 'shipped') await sendPush('shipped', order);
-        else if (next === 'delivered') await sendPush('delivered', order);
+      if (prevStatus !== nextStatus) {
+        if (nextStatus === 'paid') await sendPush('paid', order);
+        else if (nextStatus === 'shipped') await sendPush('shipped', order);
+        else if (nextStatus === 'delivered') await sendPush('delivered', order);
       }
     } catch (e) {
       strapi.log.error('[PUSH] afterUpdate failed', e);
