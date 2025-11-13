@@ -43,45 +43,25 @@ function toStatusCode(raw?: string) {
   return ALLOWED_STATUS.has(s) ? s : 'pending';
 }
 
-// ✅ твоя логика языка/валюты — только аккуратно усилена
+// ✅ твоя логика языка/валюты — вообще не трогаю
 async function fillLangAndCurrencyFromProfile(data: any) {
-  // 0. Собираем язык из возможных полей: language / lang / locale / customer.*
-  const rawLang =
-    data.language ||
-    data.lang ||
-    data.locale ||
-    (data.customer &&
-      (data.customer.language || data.customer.lang || data.customer.locale));
+  // 1. Из payload (прямо из тела запроса)
+  if (data.language) data.language = String(data.language).toLowerCase();
+  if (data.currency) data.currency = String(data.currency).toUpperCase();
 
-  if (rawLang) {
-    data.language = String(rawLang).toLowerCase();
-  }
+  // 2. Из customer
+  if (!data.language && data?.customer?.language)
+    data.language = String(data.customer.language).toLowerCase();
+  if (!data.currency && data?.customer?.currency)
+    data.currency = String(data.customer.currency).toUpperCase();
 
-  // 1. Собираем валюту из разных ключей:
-  // currency / selectedCurrency / currencyCode / customer.currency / customerCurrency / customer.selectedCurrency
-  const rawCurrency =
-    data.currency ||
-    data.selectedCurrency ||
-    data.currencyCode ||
-    (data.customer &&
-      (data.customer.currency ||
-        data.customerCurrency ||
-        data.customer.selectedCurrency));
-
-  if (rawCurrency) {
-    data.currency = String(rawCurrency).toUpperCase();
-  }
-
-  // 2. Если не пришло из тела — пробуем взять из пользователя
+  // 3. Из пользователя
   try {
     let userId: string | number | undefined;
-    if (typeof data.user === 'number' || typeof data.user === 'string') {
-      userId = data.user;
-    } else if (data?.user?.id) {
-      userId = data.user.id;
-    } else if (Array.isArray(data?.user?.connect) && data.user.connect[0]?.id) {
+    if (typeof data.user === 'number' || typeof data.user === 'string') userId = data.user;
+    else if (data?.user?.id) userId = data.user.id;
+    else if (Array.isArray(data?.user?.connect) && data.user.connect[0]?.id)
       userId = data.user.connect[0].id;
-    }
 
     if (userId) {
       const user = await strapi.entityService.findOne(
@@ -89,35 +69,17 @@ async function fillLangAndCurrencyFromProfile(data: any) {
         Number(userId)
       );
       const u = user as any;
-
-      if (!data.language && u?.language) {
-        data.language = String(u.language).toLowerCase();
-      }
-      if (!data.currency && u?.currency) {
-        data.currency = String(u.currency).toUpperCase();
-      }
-      if (!data.customerEmail && u?.email) {
-        data.customerEmail = u.email.toLowerCase();
-      }
+      if (!data.language && u?.language) data.language = String(u.language).toLowerCase();
+      if (!data.currency && u?.currency) data.currency = String(u.currency).toUpperCase();
+      if (!data.customerEmail && u?.email) data.customerEmail = u.email.toLowerCase();
     }
   } catch (e) {
     strapi.log.warn('[ORDER] cannot resolve user lang/currency');
   }
 
-  // 3. Жёсткие дефолты, чтобы в заказе ВСЕГДА были значения
+  // 4. Дефолты
   if (!data.language) data.language = 'ru';
-
-  if (!data.currency) {
-    data.currency = 'RUB';
-  } else {
-    // на всякий случай нормализуем формат: 3 буквы, верхний регистр
-    data.currency = String(data.currency).toUpperCase().slice(0, 3);
-  }
-
-  // Лог для дебага (можно убрать, если будет шуметь)
-  strapi.log.info(
-    `[ORDER] fillLangAndCurrencyFromProfile → language=${data.language}, currency=${data.currency}`
-  );
+  if (!data.currency) data.currency = 'RUB';
 }
 
 // ========== ДОП. УТИЛЫ ДЛЯ ПИСЕМ (НЕ ЛОМАЮТ ТВОЮ ЛОГИКУ) ==========
@@ -170,7 +132,7 @@ function renderOrderEmailHtml(order: any) {
     },
     fr: {
       thanks: 'Merci pour votre commande !',
-      intro: 'Nous avons reçu votre paiement и préparons votre commande. Détails ci-dessous.',
+      intro: 'Nous avons reçu votre paiement et préparons votre commande. Détails ci-dessous.',
       items: 'Articles de la commande',
       qty: 'Qté',
       total: 'Total',
