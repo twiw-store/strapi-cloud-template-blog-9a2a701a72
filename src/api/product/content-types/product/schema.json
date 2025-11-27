@@ -211,7 +211,7 @@
     },
 
     "about": {
-      "type": "string",
+      "type": "richtext",
       "pluginOptions": {
         "i18n": {
           "localized": true

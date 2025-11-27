@@ -591,6 +591,46 @@ export interface ApiProductProduct extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiPushDevicePushDevice extends Struct.CollectionTypeSchema {
+  collectionName: 'push_devices';
+  info: {
+    displayName: 'Push Device';
+    pluralName: 'push-devices';
+    singularName: 'push-device';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    country: Schema.Attribute.String;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    lang: Schema.Attribute.String & Schema.Attribute.DefaultTo<'ru'>;
+    lastSeenAt: Schema.Attribute.DateTime;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::push-device.push-device'
+    > &
+      Schema.Attribute.Private;
+    marketingOptIn: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
+    platform: Schema.Attribute.Enumeration<['ios', 'android', 'web']>;
+    publishedAt: Schema.Attribute.DateTime;
+    tags: Schema.Attribute.JSON & Schema.Attribute.DefaultTo<[]>;
+    token: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    user: Schema.Attribute.Relation<
+      'oneToOne',
+      'plugin::users-permissions.user'
+    >;
+  };
+}
+
 export interface PluginContentReleasesRelease
   extends Struct.CollectionTypeSchema {
   collectionName: 'strapi_releases';
@@ -1118,6 +1158,7 @@ declare module '@strapi/strapi' {
       'api::category.category': ApiCategoryCategory;
       'api::order.order': ApiOrderOrder;
       'api::product.product': ApiProductProduct;
+      'api::push-device.push-device': ApiPushDevicePushDevice;
       'plugin::content-releases.release': PluginContentReleasesRelease;
       'plugin::content-releases.release-action': PluginContentReleasesReleaseAction;
       'plugin::i18n.locale': PluginI18NLocale;
