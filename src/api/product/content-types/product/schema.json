@@ -9,28 +9,24 @@
   "options": {
     "draftAndPublish": true
   },
-  "pluginOptions": {},
+  "pluginOptions": {
+    "i18n": {
+      "localized": true
+    }
+  },
   "attributes": {
     "title": {
       "type": "string"
     },
 
-    "title_ru": {
-      "type": "string"
-    },
-    "title_en": {
-      "type": "string"
-    },
-    "title_fr": {
-      "type": "string"
-    },
-    "title_es": {
-      "type": "string"
-    },
-
     "slug": {
       "type": "uid",
-      "targetField": "title"
+      "targetField": "title",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
     },
 
     "price": {
@@ -38,6 +34,11 @@
       "options": {
         "precision": 10,
         "scale": 2
+      },
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
       }
     },
 
@@ -53,6 +54,9 @@
       "pluginOptions": {
         "content-manager": {
           "visible": true
+        },
+        "i18n": {
+          "localized": false
         }
       }
     },
@@ -65,6 +69,9 @@
       "pluginOptions": {
         "content-manager": {
           "visible": true
+        },
+        "i18n": {
+          "localized": false
         }
       }
     },
@@ -77,6 +84,9 @@
       "pluginOptions": {
         "content-manager": {
           "visible": true
+        },
+        "i18n": {
+          "localized": false
         }
       }
     },
@@ -84,35 +94,28 @@
     "description": {
       "type": "text"
     },
-    "description_ru": {
-      "type": "text"
-    },
-    "description_en": {
-      "type": "text"
-    },
-    "description_fr": {
-      "type": "text"
-    },
-    "description_es": {
-      "type": "text"
-    },
 
     "images": {
       "type": "media",
       "multiple": true,
-      "allowedTypes": [
-        "images",
-        "files",
-        "videos",
-        "audios"
-      ]
+      "allowedTypes": ["images", "files", "videos", "audios"],
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
     },
 
     "category": {
       "type": "relation",
       "relation": "manyToOne",
       "target": "api::category.category",
-      "inversedBy": "products"
+      "inversedBy": "products",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
     },
 
     "colors": {
@@ -122,90 +125,62 @@
     "dimensions": {
       "type": "component",
       "repeatable": false,
-      "component": "product.dimensions"
+      "component": "product.dimensions",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
     },
 
     "variants": {
       "type": "component",
       "repeatable": true,
-      "component": "product.variant"
+      "component": "product.variant",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
     },
 
     "look": {
       "type": "relation",
       "relation": "manyToMany",
       "target": "api::product.product",
-      "mappedBy": "products"
+      "mappedBy": "products",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
     },
 
     "products": {
       "type": "relation",
       "relation": "manyToMany",
       "target": "api::product.product",
-      "inversedBy": "look"
+      "inversedBy": "look",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
     },
 
     "details": {
-      "type": "text"
-    },
-    "details_ru": {
-      "type": "text"
-    },
-    "details_en": {
-      "type": "text"
-    },
-    "details_fr": {
-      "type": "text"
-    },
-    "details_es": {
       "type": "text"
     },
 
     "sizeInfo": {
       "type": "string"
     },
-    "sizeInfo_ru": {
-      "type": "string"
-    },
-    "sizeInfo_en": {
-      "type": "string"
-    },
-    "sizeInfo_fr": {
-      "type": "string"
-    },
-    "sizeInfo_es": {
-      "type": "string"
-    },
 
     "care": {
       "type": "string"
     },
-    "care_ru": {
-      "type": "string"
-    },
-    "care_en": {
-      "type": "string"
-    },
-    "care_fr": {
-      "type": "string"
-    },
-    "care_es": {
-      "type": "string"
-    },
 
     "about": {
-      "type": "string"
-    },
-    "about_ru": {
-      "type": "string"
-    },
-    "about_en": {
-      "type": "string"
-    },
-    "about_fr": {
-      "type": "string"
-    },
-    "about_es": {
       "type": "string"
     }
   }
