@@ -6,67 +6,182 @@
     "pluralName": "products",
     "displayName": "Product"
   },
-  "options": { "draftAndPublish": true },
-  "pluginOptions": {},
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {
+    "i18n": {
+      "localized": true
+    }
+  },
   "attributes": {
-    "title": { "type": "string" },
-    "slug": { "type": "uid", "targetField": "title" },
+    "title": {
+      "type": "string"
+    },
 
-    "price": { "type": "decimal", "options": { "precision": 10, "scale": 2 } },
+    "slug": {
+      "type": "uid",
+      "targetField": "title",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+
+    "price": {
+      "type": "decimal",
+      "options": {
+        "precision": 10,
+        "scale": 2
+      },
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+
     "compareAtPrice": {
       "type": "decimal",
       "required": false,
       "default": null,
-      "options": { "precision": 10, "scale": 2 },
+      "options": {
+        "precision": 10,
+        "scale": 2
+      },
       "configurable": true,
-      "pluginOptions": { "content-manager": { "visible": true } }
+      "pluginOptions": {
+        "content-manager": {
+          "visible": true
+        },
+        "i18n": {
+          "localized": false
+        }
+      }
     },
 
-    "saleStart": { "type": "datetime", "required": false, "default": null,
-      "configurable": true, "pluginOptions": { "content-manager": { "visible": true } } },
-    "saleEnd":   { "type": "datetime", "required": false, "default": null,
-      "configurable": true, "pluginOptions": { "content-manager": { "visible": true } } },
+    "saleStart": {
+      "type": "datetime",
+      "required": false,
+      "default": null,
+      "configurable": true,
+      "pluginOptions": {
+        "content-manager": {
+          "visible": true
+        },
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
 
-    "description": { "type": "text" },
-    "images": { "type": "media", "multiple": true, "allowedTypes": ["images","files","videos","audios"] },
+    "saleEnd": {
+      "type": "datetime",
+      "required": false,
+      "default": null,
+      "configurable": true,
+      "pluginOptions": {
+        "content-manager": {
+          "visible": true
+        },
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+
+    "description": {
+      "type": "text"
+    },
+
+    "images": {
+      "type": "media",
+      "multiple": true,
+      "allowedTypes": ["images", "files", "videos", "audios"],
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
 
     "category": {
       "type": "relation",
       "relation": "manyToOne",
       "target": "api::category.category",
-      "inversedBy": "products"
+      "inversedBy": "products",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
     },
 
-    "colors": { "type": "string" },
+    "colors": {
+      "type": "string"
+    },
 
     "dimensions": {
       "type": "component",
       "repeatable": false,
-      "component": "product.dimensions"
+      "component": "product.dimensions",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
     },
 
     "variants": {
       "type": "component",
       "repeatable": true,
-      "component": "product.variant"
+      "component": "product.variant",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
     },
 
     "look": {
       "type": "relation",
       "relation": "manyToMany",
       "target": "api::product.product",
-      "mappedBy": "products"
+      "mappedBy": "products",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
     },
+
     "products": {
       "type": "relation",
       "relation": "manyToMany",
       "target": "api::product.product",
-      "inversedBy": "look"
+      "inversedBy": "look",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
     },
 
-    "details":  { "type": "text" },
-    "sizeInfo": { "type": "string" },
-    "care":     { "type": "string" },
-    "about":    { "type": "string" }
+    "details": {
+      "type": "text"
+    },
+
+    "sizeInfo": {
+      "type": "string"
+    },
+
+    "care": {
+      "type": "string"
+    },
+
+    "about": {
+      "type": "string"
+    }
   }
 }
