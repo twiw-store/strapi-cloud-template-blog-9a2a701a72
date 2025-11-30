@@ -22,24 +22,18 @@
           "localized": true
         }
       },
-      "required": false,
-      "unique": false
+      "required": true
     },
     "slug": {
       "type": "uid",
-      "pluginOptions": {
-        "i18n": {
-          "localized": true
-        }
-      },
       "targetField": "title",
-      "required": false
+      "required": true
     },
     "products": {
       "type": "relation",
-      "relation": "oneToMany",
+      "relation": "manyToMany",
       "target": "api::product.product",
-      "mappedBy": "category"
+      "inversedBy": "categories"
     }
   }
 }
