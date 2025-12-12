@@ -18,36 +18,60 @@
     "emailSentAt": { "type": "datetime" },
 
     "orderNumber": { "type": "string", "required": true, "unique": true },
+
     "orderStatus": {
       "type": "enumeration",
       "enum": ["pending", "paid", "shipped", "delivered", "cancelled"],
       "default": "pending",
       "required": true
     },
+
     "deliveryMethod": {
       "type": "enumeration",
       "enum": ["courier", "pickup"]
     },
+
     "total": { "type": "integer", "default": 0 },
+
     "currency": { "type": "string", "default": "RUB" },
+
     "country": { "type": "string" },
+
     "customerEmail": { "type": "email" },
+
     "customerPhone": { "type": "string" },
+
     "firstName": { "type": "string" },
+
     "lastName": { "type": "string" },
+
     "city": { "type": "string" },
+
     "street": { "type": "string" },
+
     "building": { "type": "string" },
+
     "apartment": { "type": "string" },
+
     "zip": { "type": "string" },
+
     "notes": { "type": "string" },
 
     "language": {
       "type": "enumeration",
       "enum": ["ru", "en", "fr", "es"],
       "default": "ru",
-     "required": true
-    }
+      "required": true
+    },
 
+    "transactionId": {
+      "type": "string"
+    },
+
+    "paymentStatus": {
+      "type": "enumeration",
+      "enum": ["pending", "processing", "paid", "paid_captured", "failed"],
+      "default": "pending"
+    }
   }
 }

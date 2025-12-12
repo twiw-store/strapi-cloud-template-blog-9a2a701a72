@@ -83,71 +83,6 @@ async function requestWithRetry(fn, description, maxAttempts = 3) {
   throw lastError;
 }
 
-// ───────── категории ─────────
-
-async function findOrCreateCategoryByName(name) {
-  if (!name) return null;
-  const trimmed = String(name).trim();
-  if (!trimmed) return null;
-
-  const catSlug = slugify(trimmed);
-
-  try {
-    // ищем по slug
-    let res = await requestWithRetry(
-      () =>
-        client.get('/api/categories', {
-          params: { 'filters[slug][$eq]': catSlug },
-        }),
-      `поиске категории по slug="${catSlug}"`
-    );
-    if (res.data?.data?.length) return res.data.data[0].id;
-
-    // ищем по title (eqi)
-    res = await requestWithRetry(
-      () =>
-        client.get('/api/categories', {
-          params: { 'filters[title][$eqi]': trimmed },
-        }),
-      `поиске категории по названию "${trimmed}"`
-    );
-    if (res.data?.data?.length) return res.data.data[0].id;
-
-    // создаём (locale условно ru – не критично)
-    const createRes = await requestWithRetry(
-      () =>
-        client.post('/api/categories', {
-          data: { title: trimmed, slug: catSlug, locale: 'ru' },
-        }),
-      `создании категории "${trimmed}"`
-    );
-
-    return createRes.data?.data?.id ?? null;
-  } catch (err) {
-    console.error(
-      `   ❌ Ошибка при создании/поиске категории "${name}":`,
-      err.response?.data || err.message
-    );
-    return null;
-  }
-}
-
-async function resolveCategories(categoryCell) {
-  if (!categoryCell) return [];
-
-  const names = String(categoryCell)
-    .split(/[,;]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  const ids = [];
-  for (const name of names) {
-    const id = await findOrCreateCategoryByName(name);
-    if (id) ids.push(id);
-  }
-  return ids.map((id) => ({ id }));
-}
-
 // ───────── импорт одной группы товара (EN локаль) ─────────
 
 async function importGroupEn(slug, groupRows, groupIndex) {
@@ -192,8 +127,6 @@ async function importGroupEn(slug, groupRows, groupIndex) {
       console.log(`   ✅ Найден RU-товар id=${ruId} для slug="${slug}"`);
     }
 
-    const categoryRelations = await resolveCategories(baseRow.category);
-
     const dimWeight = toNumberOrNull(baseRow.dimension_weight);
     const dimLength = toNumberOrNull(baseRow.dimension_length);
     const dimWidth = toNumberOrNull(baseRow.dimension_width);
@@ -226,17 +159,24 @@ async function importGroupEn(slug, groupRows, groupIndex) {
     const baseData = {
       locale: 'en',
       slug: baseRow.slug || slug,
+
       title: baseRow.title_en || baseRow.title_ru || slug,
       description: baseRow.description_en || null,
       details: baseRow.details_en || null,
       sizeInfo: baseRow.sizeInfo_en || null,
       care: baseRow.care_en || null,
       about: baseRow.about_en || null,
+
       price: toNumberOrNull(baseRow.price) ?? 0,
       compareAtPrice: toNumberOrNull(baseRow.compareAtPrice),
       saleStart: baseRow.saleStart || null,
       saleEnd: baseRow.saleEnd || null,
-      categories: categoryRelations,
+
+      // 🟢 ВАЖНО: категории не трогаем, чтобы не ловить 404 на relation
+      // categories: categoryRelations,
+
+      // 🟢 Просто подтягиваем цвет из CSV
+      colors: baseRow.colors || null,
     };
 
     if (dimensions) baseData.dimensions = dimensions;
