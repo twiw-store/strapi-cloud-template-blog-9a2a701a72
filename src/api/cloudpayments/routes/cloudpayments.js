@@ -4,19 +4,15 @@ module.exports = {
   routes: [
     {
       method: 'POST',
-      path: '/cloudpayments/check',
+      path: '/payments/cloudpayments/check',
       handler: 'cloudpayments.check',
-      config: {
-        auth: false,
-      },
+      config: { auth: false },
     },
     {
       method: 'POST',
-      path: '/cloudpayments/pay',
+      path: '/payments/cloudpayments/pay',
       handler: 'cloudpayments.pay',
-      config: {
-        auth: false,
-      },
+      config: { auth: false },
     },
   ],
 };
