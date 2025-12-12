@@ -16,6 +16,12 @@ module.exports = {
     },
     {
       method: 'POST',
+      path: '/payments/cloudpayments/confirm',
+      handler: 'cloudpayments.confirm',
+      config: { auth: false },
+    },
+    {
+      method: 'POST',
       path: '/payments/cloudpayments/fail',
       handler: 'cloudpayments.fail',
       config: { auth: false },

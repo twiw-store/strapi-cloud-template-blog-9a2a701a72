@@ -9,6 +9,10 @@ module.exports = {
     ctx.body = { code: 0 };
   },
 
+  async confirm(ctx) {
+    ctx.body = { code: 0 };
+  },
+
   async fail(ctx) {
     ctx.body = { code: 0 };
   },
