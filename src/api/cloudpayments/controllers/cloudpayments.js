@@ -8,4 +8,8 @@ module.exports = {
   async pay(ctx) {
     ctx.body = { code: 0 };
   },
+
+  async fail(ctx) {
+    ctx.body = { code: 0 };
+  },
 };

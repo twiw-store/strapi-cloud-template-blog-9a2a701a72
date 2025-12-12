@@ -14,5 +14,11 @@ module.exports = {
       handler: 'cloudpayments.pay',
       config: { auth: false },
     },
+    {
+      method: 'POST',
+      path: '/payments/cloudpayments/fail',
+      handler: 'cloudpayments.fail',
+      config: { auth: false },
+    },
   ],
 };
