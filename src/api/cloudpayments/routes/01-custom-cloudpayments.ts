@@ -9,12 +9,16 @@ const routes: Core.RouterConfig = {
       handler: 'api::cloudpayments.cloudpayments.check',
       config: { auth: false },
     },
-    {
+    { 
       method: 'POST',
       path: '/cloudpayments/pay',
       handler: 'api::cloudpayments.cloudpayments.pay',
-      config: { auth: false },
+      config: {
+      auth: { strategies: ['users-permissions'] },
+     },
     },
+
+
     {
       method: 'POST',
       path: '/cloudpayments/confirm',
