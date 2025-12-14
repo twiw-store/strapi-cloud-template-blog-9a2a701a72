@@ -1,7 +1,6 @@
-'use strict';
+import type { Core } from '@strapi/strapi';
 
-/** @type {import('@strapi/strapi').Core.RouterConfig} */
-module.exports = {
+const routes: Core.RouterConfig = {
   type: 'content-api',
   routes: [
     {
@@ -30,3 +29,5 @@ module.exports = {
     },
   ],
 };
+
+export default routes;

@@ -47,15 +47,18 @@ export default {
       return;
     }
 
-    await strapi.db.query('api::order.order').update({
-      where: { id: orderId },
-      data: {
-        paymentStatus: 'paid',
-        transactionId: transactionId ? String(transactionId) : null,
-      },
-    });
+    const updated = await strapi.db.query('api::order.order').update({
+  where: { id: orderId },
+  data: {
+    paymentStatus: 'paid',
+    transactionId: transactionId ? String(transactionId) : null,
+  },
+});
 
-    ctx.body = { code: 0 };
+strapi.log.info(`[CloudPayments] confirm OK orderId=${orderId} tx=${transactionId}`);
+
+ctx.body = { code: 0, updatedId: updated?.id ?? null };
+
   },
 
   async fail(ctx: Context) {
