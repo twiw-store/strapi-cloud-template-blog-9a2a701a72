@@ -1,21 +1,33 @@
 'use strict';
 
-module.exports = {
+export default {
   routes: [
     // CHECK
-    { method: 'GET',  path: '/payments/cloudpayments/check', handler: 'cloudpayments.check', config: { auth: false } },
-    { method: 'POST', path: '/payments/cloudpayments/check', handler: 'cloudpayments.check', config: { auth: false } },
+    {
+      method: 'POST',
+      path: '/payments/cloudpayments/check',
+      handler: 'cloudpayments.check',
+    },
 
     // PAY
-    { method: 'GET',  path: '/payments/cloudpayments/pay', handler: 'cloudpayments.pay', config: { auth: false } },
-    { method: 'POST', path: '/payments/cloudpayments/pay', handler: 'cloudpayments.pay', config: { auth: false } },
+    {
+      method: 'POST',
+      path: '/payments/cloudpayments/pay',
+      handler: 'cloudpayments.pay',
+    },
 
     // CONFIRM
-    { method: 'GET',  path: '/payments/cloudpayments/confirm', handler: 'cloudpayments.confirm', config: { auth: false } },
-    { method: 'POST', path: '/payments/cloudpayments/confirm', handler: 'cloudpayments.confirm', config: { auth: false } },
+    {
+      method: 'POST',
+      path: '/payments/cloudpayments/confirm',
+      handler: 'cloudpayments.confirm',
+    },
 
     // FAIL
-    { method: 'GET',  path: '/payments/cloudpayments/fail', handler: 'cloudpayments.fail', config: { auth: false } },
-    { method: 'POST', path: '/payments/cloudpayments/fail', handler: 'cloudpayments.fail', config: { auth: false } },
+    {
+      method: 'POST',
+      path: '/payments/cloudpayments/fail',
+      handler: 'cloudpayments.fail',
+    },
   ],
 };
