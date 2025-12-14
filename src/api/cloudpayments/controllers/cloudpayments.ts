@@ -49,10 +49,10 @@ function verifyCloudPaymentsHmac(ctx: any, parsedBody: any) {
     .digest('base64');
 
   try {
-    return crypto.timingSafeEqual(
-      Buffer.from(received),
-      Buffer.from(computed)
-    );
+    const a = Buffer.from(received, 'base64');
+    const b = Buffer.from(computed, 'base64');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
   } catch {
     return false;
   }
