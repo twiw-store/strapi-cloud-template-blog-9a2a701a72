@@ -1,17 +1,32 @@
 'use strict';
 
+/** @type {import('@strapi/strapi').Core.RouterConfig} */
 module.exports = {
+  type: 'content-api',
   routes: [
     {
       method: 'POST',
-      path: '/__cp_ping_45182db',
-      handler: 'cloudpayments.check',
+      path: '/cloudpayments/check',
+      handler: 'api::cloudpayments.cloudpayments.check',
       config: { auth: false },
     },
-
-    { method: 'POST', path: '/cloudpayments/check', handler: 'cloudpayments.check', config: { auth: false } },
-    { method: 'POST', path: '/cloudpayments/pay', handler: 'cloudpayments.pay', config: { auth: false } },
-    { method: 'POST', path: '/cloudpayments/confirm', handler: 'cloudpayments.confirm', config: { auth: false } },
-    { method: 'POST', path: '/cloudpayments/fail', handler: 'cloudpayments.fail', config: { auth: false } },
+    {
+      method: 'POST',
+      path: '/cloudpayments/pay',
+      handler: 'api::cloudpayments.cloudpayments.pay',
+      config: { auth: false },
+    },
+    {
+      method: 'POST',
+      path: '/cloudpayments/confirm',
+      handler: 'api::cloudpayments.cloudpayments.confirm',
+      config: { auth: false },
+    },
+    {
+      method: 'POST',
+      path: '/cloudpayments/fail',
+      handler: 'api::cloudpayments.cloudpayments.fail',
+      config: { auth: false },
+    },
   ],
 };
