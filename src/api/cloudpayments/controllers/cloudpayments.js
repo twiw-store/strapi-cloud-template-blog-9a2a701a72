@@ -1,6 +1,4 @@
-'use strict';
-
-module.exports = {
+export default {
   async check(ctx) {
     ctx.body = { code: 0 };
   },
