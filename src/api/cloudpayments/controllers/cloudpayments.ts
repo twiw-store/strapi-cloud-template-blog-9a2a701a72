@@ -22,13 +22,10 @@ function parseMoneyLike(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
 
   if (typeof value === 'string') {
-    // "12 990 ₽" -> "12990"
-    // "12,990.50" -> "12990.50"
-    // "12990 RUB" -> "12990"
     const normalized = value
-      .replace(/\s+/g, '')                  // убрать пробелы
-      .replace(/₽|rub|eur|usd|₽/gi, '')     // убрать валюту/символы
-      .replace(',', '.');                  // запятая -> точка
+      .replace(/\s+/g, '')              // убрать пробелы
+      .replace(/₽|rub|eur|usd/gi, '')   // убрать валюты/символы
+      .replace(',', '.');              // запятая -> точка
 
     const cleaned = normalized.replace(/[^0-9.]/g, ''); // оставить цифры и точку
     if (!cleaned) return null;
@@ -49,7 +46,9 @@ export default {
 
   /**
    * PAY
-   * Body: { orderDocumentId: string }  (можно documentId)
+   * Body:
+   *  - orderDocumentId (или documentId)
+   *  - amount (если в заказе total=0 — обязательно передавай сюда сумму из приложения)
    * Return: { publicId, invoiceId, amount, currency, description }
    */
   async pay(ctx: Context) {
@@ -68,7 +67,7 @@ export default {
         return;
       }
 
-      // Забираем заказ целиком (без select)
+      // 1) Находим заказ по documentId
       const order = await strapi.db.query('api::order.order').findOne({
         where: { documentId: String(orderDocId) },
       });
@@ -80,11 +79,15 @@ export default {
       }
 
       // ---- AMOUNT ----
-      // 1) Пытаемся из order.total (у тебя он точно есть)
-      const rawTotal = (order as any).total;
-      let amount = parseMoneyLike(rawTotal);
+      // 0) если клиент передал amount — это главный источник (особенно когда order.total = 0)
+      const amountFromBodyRaw = body.amount ?? body.Amount ?? body.total ?? body.Total;
+      const amountFromBody = parseMoneyLike(amountFromBodyRaw);
 
-      // 2) fallback на другие поля (если total пустой/0)
+      // 1) иначе пробуем из order.total
+      const rawTotal = (order as any).total;
+      let amount = amountFromBody && amountFromBody > 0 ? amountFromBody : parseMoneyLike(rawTotal);
+
+      // 2) fallback на другие поля
       if (!amount || amount <= 0) {
         amount = pickFirstNumber(order, [
           'totalAmount',
@@ -101,9 +104,11 @@ export default {
         ctx.status = 400;
         ctx.body = {
           error: 'Order amount is missing or invalid',
-          hint: 'Field "total" exists but cannot be parsed or equals 0. Check if total is filled.',
-          totalValue: rawTotal,
-          totalType: typeof rawTotal,
+          hint: 'Pass "amount" in /pay body OR store total in Order before calling /pay',
+          orderTotal: rawTotal,
+          orderTotalType: typeof rawTotal,
+          bodyAmount: amountFromBodyRaw ?? null,
+          bodyAmountParsed: amountFromBody ?? null,
           sampleKeys: Object.keys(order || {}).slice(0, 40),
         };
         return;
@@ -141,7 +146,7 @@ export default {
         // не критично
       }
 
-      const invoiceId = String((order as any).documentId); // КЛЮЧЕВО
+      const invoiceId = String((order as any).documentId); // КЛЮЧЕВО: documentId
       const description =
         (order as any).orderNumber
           ? `TWIW order #${(order as any).orderNumber}`
