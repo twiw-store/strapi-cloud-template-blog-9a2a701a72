@@ -1,33 +1,32 @@
 'use strict';
 
-export default {
+module.exports = {
   routes: [
-    // CHECK
     {
       method: 'POST',
       path: '/payments/cloudpayments/check',
       handler: 'cloudpayments.check',
+      config: {
+        auth: false,
+      },
     },
-
-    // PAY
     {
       method: 'POST',
       path: '/payments/cloudpayments/pay',
       handler: 'cloudpayments.pay',
+      config: { auth: false },
     },
-
-    // CONFIRM
     {
       method: 'POST',
       path: '/payments/cloudpayments/confirm',
       handler: 'cloudpayments.confirm',
+      config: { auth: false },
     },
-
-    // FAIL
     {
       method: 'POST',
       path: '/payments/cloudpayments/fail',
       handler: 'cloudpayments.fail',
+      config: { auth: false },
     },
   ],
 };
