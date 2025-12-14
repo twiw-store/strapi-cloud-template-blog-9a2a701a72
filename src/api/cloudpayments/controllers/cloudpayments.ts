@@ -18,6 +18,30 @@ function pickFirstString(obj: any, keys: string[]) {
   return null;
 }
 
+function parseMoneyLike(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+
+  if (typeof value === 'string') {
+    // "12 990 ₽" -> "12990"
+    // "12,990.50" -> "12990.50"
+    // "12990 RUB" -> "12990"
+    const normalized = value
+      .replace(/\s+/g, '')                  // убрать пробелы
+      .replace(/₽|rub|eur|usd|₽/gi, '')     // убрать валюту/символы
+      .replace(',', '.');                  // запятая -> точка
+
+    const cleaned = normalized.replace(/[^0-9.]/g, ''); // оставить цифры и точку
+    if (!cleaned) return null;
+
+    const num = Number(cleaned);
+    if (!Number.isFinite(num)) return null;
+
+    return num;
+  }
+
+  return null;
+}
+
 export default {
   async check(ctx: Context) {
     ctx.body = { code: 0 };
@@ -44,7 +68,7 @@ export default {
         return;
       }
 
-      // Забираем заказ целиком (без select), чтобы не нарваться на обрезание полей
+      // Забираем заказ целиком (без select)
       const order = await strapi.db.query('api::order.order').findOne({
         where: { documentId: String(orderDocId) },
       });
@@ -55,32 +79,41 @@ export default {
         return;
       }
 
-      // Сумма + валюта (подстраховка)
-      const amount = pickFirstNumber(order, [
-        'totalAmount',
-        'total',
-        'amount',
-        'sum',
-        'totalPrice',
-        'grandTotal',
-        'finalTotal',
-        'priceTotal',
-      ]);
+      // ---- AMOUNT ----
+      // 1) Пытаемся из order.total (у тебя он точно есть)
+      const rawTotal = (order as any).total;
+      let amount = parseMoneyLike(rawTotal);
 
-      const currency =
-        pickFirstString(order, ['currency', 'currencyCode']) || 'RUB';
+      // 2) fallback на другие поля (если total пустой/0)
+      if (!amount || amount <= 0) {
+        amount = pickFirstNumber(order, [
+          'totalAmount',
+          'amount',
+          'sum',
+          'totalPrice',
+          'grandTotal',
+          'finalTotal',
+          'priceTotal',
+        ]);
+      }
 
       if (!amount || amount <= 0) {
         ctx.status = 400;
         ctx.body = {
           error: 'Order amount is missing or invalid',
-          hint: 'Tell me the exact field name in Order that stores total price',
+          hint: 'Field "total" exists but cannot be parsed or equals 0. Check if total is filled.',
+          totalValue: rawTotal,
+          totalType: typeof rawTotal,
           sampleKeys: Object.keys(order || {}).slice(0, 40),
         };
         return;
       }
 
-      // ENV: publicId для виджета
+      // ---- CURRENCY ----
+      const currency =
+        pickFirstString(order, ['currency', 'currencyCode']) || 'RUB';
+
+      // ---- PUBLIC ID ----
       const publicId =
         process.env.CLOUDPAYMENTS_PUBLIC_ID ||
         process.env.CLOUDPAYMENTS_PUBLIC_KEY ||
@@ -90,10 +123,8 @@ export default {
       if (!publicId) {
         ctx.status = 500;
         ctx.body = {
-          error:
-            'Missing CLOUDPAYMENTS_PUBLIC_ID in Strapi Cloud env variables',
-          hint:
-            'Add CLOUDPAYMENTS_PUBLIC_ID in Strapi Cloud → Project → Settings → Environment variables',
+          error: 'Missing CLOUDPAYMENTS_PUBLIC_ID in Strapi Cloud env variables',
+          hint: 'Add CLOUDPAYMENTS_PUBLIC_ID in Strapi Cloud → Project → Settings → Environment variables',
         };
         return;
       }
@@ -119,7 +150,7 @@ export default {
       ctx.body = {
         publicId,
         invoiceId,
-        amount,
+        amount: Number(amount),
         currency,
         description,
       };
