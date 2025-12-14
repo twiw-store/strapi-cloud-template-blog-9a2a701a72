@@ -2,22 +2,7 @@ import type { Context } from 'koa';
 import qs from 'qs';
 import crypto from 'crypto';
 
-function pickFirstNumber(obj: any, keys: string[]) {
-  for (const k of keys) {
-    const v = obj?.[k];
-    if (typeof v === 'number' && Number.isFinite(v)) return v;
-    if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))) return Number(v);
-  }
-  return null;
-}
-
-function pickFirstString(obj: any, keys: string[]) {
-  for (const k of keys) {
-    const v = obj?.[k];
-    if (typeof v === 'string' && v.trim() !== '') return v.trim();
-  }
-  return null;
-}
+// ───────────────── utils ─────────────────
 
 function parseMoneyLike(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -32,9 +17,7 @@ function parseMoneyLike(value: unknown): number | null {
     if (!cleaned) return null;
 
     const num = Number(cleaned);
-    if (!Number.isFinite(num)) return null;
-
-    return num;
+    return Number.isFinite(num) ? num : null;
   }
 
   return null;
@@ -45,17 +28,11 @@ function getHeader(ctx: any, name: string) {
 }
 
 /**
- * 🔐 CloudPayments HMAC check
+ * 🔐 CloudPayments HMAC
  */
 function verifyCloudPaymentsHmac(ctx: any, parsedBody: any) {
   const secret = process.env.CLOUDPAYMENTS_API_PASSWORD || '';
   if (!secret) return false;
-
-  // 🔍 RAW BODY CHECK (для теста, потом можно убрать)
-  strapi.log.info(
-    '[CloudPayments] rawBody exists:',
-    Boolean((ctx.request as any).rawBody)
-  );
 
   const received = getHeader(ctx, 'x-content-hmac');
   if (!received) return false;
@@ -71,16 +48,27 @@ function verifyCloudPaymentsHmac(ctx: any, parsedBody: any) {
     .update(raw, 'utf8')
     .digest('base64');
 
-  const a = Buffer.from(received);
-  const b = Buffer.from(computed);
-  if (a.length !== b.length) return false;
-
-  return crypto.timingSafeEqual(a, b);
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(received),
+      Buffer.from(computed)
+    );
+  } catch {
+    return false;
+  }
 }
 
+// ───────────────── controller ─────────────────
+
 export default {
-  // ───────────────── CHECK ─────────────────
+  // ───────────── CHECK ─────────────
   async check(ctx: Context) {
+    strapi.log.info(
+      `[CloudPayments] rawBody exists: ${Boolean(
+        (ctx.request as any).rawBody
+      )}`
+    );
+
     const raw = (ctx.request as any).body;
     const body = typeof raw === 'string' ? qs.parse(raw) : raw || {};
 
@@ -90,16 +78,20 @@ export default {
       return;
     }
 
-    const invoiceId = body.InvoiceId ?? body.invoiceId;
+    const invoiceId =
+      body.InvoiceId ?? body.invoiceId ?? body.invoice_id;
+
     if (!invoiceId) {
       ctx.body = { code: 10, message: 'Missing InvoiceId' };
       return;
     }
 
-    const order = await strapi.db.query('api::order.order').findOne({
-      where: { documentId: String(invoiceId) },
-      select: ['total', 'currency', 'paymentStatus'] as any,
-    });
+    const order = await strapi.db
+      .query('api::order.order')
+      .findOne({
+        where: { documentId: String(invoiceId) },
+        select: ['total', 'currency', 'paymentStatus'] as any,
+      });
 
     if (!order) {
       ctx.body = { code: 10, message: 'Order not found' };
@@ -111,7 +103,7 @@ export default {
       return;
     }
 
-    const amount = parseMoneyLike(body.Amount);
+    const amount = parseMoneyLike(body.Amount ?? body.amount);
     if (amount != null) {
       const total = parseMoneyLike(order.total);
       if (total == null || Math.abs(total - amount) > 0.0001) {
@@ -123,20 +115,23 @@ export default {
     ctx.body = { code: 0 };
   },
 
-  // ───────────────── PAY ─────────────────
+  // ───────────── PAY ─────────────
   async pay(ctx: Context) {
     const body = (ctx.request as any).body || {};
-    const docId = body.documentId || body.orderDocumentId;
+    const documentId =
+      body.documentId || body.orderDocumentId;
 
-    if (!docId) {
+    if (!documentId) {
       ctx.status = 400;
-      ctx.body = { error: 'documentId required' };
+      ctx.body = { error: 'documentId is required' };
       return;
     }
 
-    const order = await strapi.db.query('api::order.order').findOne({
-      where: { documentId: String(docId) },
-    });
+    const order = await strapi.db
+      .query('api::order.order')
+      .findOne({
+        where: { documentId: String(documentId) },
+      });
 
     if (!order) {
       ctx.status = 404;
@@ -154,25 +149,29 @@ export default {
     const publicId = process.env.CLOUDPAYMENTS_PUBLIC_ID || '';
     if (!publicId) {
       ctx.status = 500;
-      ctx.body = { error: 'Missing CloudPayments public id' };
+      ctx.body = { error: 'Missing CLOUDPAYMENTS_PUBLIC_ID' };
       return;
     }
 
-    await strapi.db.query('api::order.order').update({
-      where: { documentId: String(docId) },
-      data: { paymentStatus: 'pending' },
-    });
+    if (order.paymentStatus !== 'paid') {
+      await strapi.db.query('api::order.order').update({
+        where: { documentId: String(documentId) },
+        data: { paymentStatus: 'pending' },
+      });
+    }
 
     ctx.body = {
       publicId,
       invoiceId: String(order.documentId),
       amount,
       currency: order.currency || 'RUB',
-      description: `TWIW order #${order.orderNumber}`,
+      description: order.orderNumber
+        ? `TWIW order #${order.orderNumber}`
+        : `TWIW order ${order.id}`,
     };
   },
 
-  // ───────────────── CONFIRM ─────────────────
+  // ───────────── CONFIRM ─────────────
   async confirm(ctx: Context) {
     const raw = (ctx.request as any).body;
     const body = typeof raw === 'string' ? qs.parse(raw) : raw || {};
@@ -183,16 +182,20 @@ export default {
       return;
     }
 
-    const invoiceId = body.InvoiceId ?? body.invoiceId;
+    const invoiceId =
+      body.InvoiceId ?? body.invoiceId ?? body.invoice_id;
+
     if (!invoiceId) {
       ctx.body = { code: 0 };
       return;
     }
 
-    const order = await strapi.db.query('api::order.order').findOne({
-      where: { documentId: String(invoiceId) },
-      select: ['paymentStatus'] as any,
-    });
+    const order = await strapi.db
+      .query('api::order.order')
+      .findOne({
+        where: { documentId: String(invoiceId) },
+        select: ['paymentStatus'] as any,
+      });
 
     if (!order || order.paymentStatus === 'paid') {
       ctx.body = { code: 0 };
@@ -203,14 +206,16 @@ export default {
       where: { documentId: String(invoiceId) },
       data: {
         paymentStatus: 'paid',
-        transactionId: String(body.TransactionId || ''),
+        transactionId: body.TransactionId
+          ? String(body.TransactionId)
+          : null,
       },
     });
 
     ctx.body = { code: 0 };
   },
 
-  // ───────────────── FAIL ─────────────────
+  // ───────────── FAIL ─────────────
   async fail(ctx: Context) {
     const raw = (ctx.request as any).body;
     const body = typeof raw === 'string' ? qs.parse(raw) : raw || {};
@@ -221,7 +226,9 @@ export default {
       return;
     }
 
-    const invoiceId = body.InvoiceId ?? body.invoiceId;
+    const invoiceId =
+      body.InvoiceId ?? body.invoiceId ?? body.invoice_id;
+
     if (!invoiceId) {
       ctx.body = { code: 0 };
       return;
