@@ -25,114 +25,118 @@ export default {
 
   /**
    * PAY
-   * Ожидает:
-   *  - documentId (или orderDocumentId) заказа
-   * Возвращает:
-   *  - publicId, invoiceId (documentId), amount, currency, description
+   * Body: { orderDocumentId: string }  (можно documentId)
+   * Return: { publicId, invoiceId, amount, currency, description }
    */
   async pay(ctx: Context) {
-    const body = (ctx.request as any).body || {};
+    try {
+      const body = (ctx.request as any).body || {};
 
-    const orderDocId =
-      body.documentId ||
-      body.orderDocumentId ||
-      body.invoiceId ||
-      body.InvoiceId;
+      const orderDocId =
+        body.orderDocumentId ||
+        body.documentId ||
+        body.InvoiceId ||
+        body.invoiceId;
 
-    if (!orderDocId) {
-      ctx.status = 400;
-      ctx.body = { error: 'documentId (orderDocumentId) is required' };
-      return;
-    }
+      if (!orderDocId) {
+        ctx.status = 400;
+        ctx.body = { error: 'orderDocumentId (or documentId) is required' };
+        return;
+      }
 
-    // 1) Находим заказ по documentId
-    const order = await strapi.db.query('api::order.order').findOne({
-      where: { documentId: String(orderDocId) },
-      // оставим select попроще — если у тебя другие поля, оно всё равно придёт, но Strapi может обрезать
-      // можно убрать select полностью, но так безопаснее
-      select: [
-        'id',
-        'documentId',
-        'paymentStatus',
-        'transactionId',
-        // ниже поля могут не существовать — это ок
-        'total',
+      // Забираем заказ целиком (без select), чтобы не нарваться на обрезание полей
+      const order = await strapi.db.query('api::order.order').findOne({
+        where: { documentId: String(orderDocId) },
+      });
+
+      if (!order) {
+        ctx.status = 404;
+        ctx.body = { error: `Order not found by documentId=${orderDocId}` };
+        return;
+      }
+
+      // Сумма + валюта (подстраховка)
+      const amount = pickFirstNumber(order, [
         'totalAmount',
+        'total',
         'amount',
         'sum',
-        'currency',
-        'orderNumber',
-      ] as any,
-    });
+        'totalPrice',
+        'grandTotal',
+        'finalTotal',
+        'priceTotal',
+      ]);
 
-    if (!order) {
-      ctx.status = 404;
-      ctx.body = { error: `Order not found by documentId=${orderDocId}` };
-      return;
-    }
+      const currency =
+        pickFirstString(order, ['currency', 'currencyCode']) || 'RUB';
 
-    // 2) Вычисляем сумму и валюту из заказа (подстраховка под разные названия полей)
-    const amount = pickFirstNumber(order, ['totalAmount', 'total', 'amount', 'sum']);
-    const currency = pickFirstString(order, ['currency']) || 'RUB';
-
-    if (!amount || amount <= 0) {
-      ctx.status = 400;
-      ctx.body = {
-        error: 'Order amount is missing or invalid',
-        hint: 'Add numeric field totalAmount/total/amount/sum to Order or adjust pay() to your schema',
-      };
-      return;
-    }
-
-    // 3) (Опционально) ставим статус pending перед оплатой
-    // Если у тебя enum другой — скажи, я подстрою
-    try {
-      if (order.paymentStatus !== 'paid') {
-        await strapi.db.query('api::order.order').update({
-          where: { documentId: String(orderDocId) },
-          data: { paymentStatus: 'pending' },
-        });
+      if (!amount || amount <= 0) {
+        ctx.status = 400;
+        ctx.body = {
+          error: 'Order amount is missing or invalid',
+          hint: 'Tell me the exact field name in Order that stores total price',
+          sampleKeys: Object.keys(order || {}).slice(0, 40),
+        };
+        return;
       }
-    } catch (e) {
-      // не ломаем оплату из-за статуса
-      strapi.log.warn(`[CloudPayments] pay: could not set pending for ${orderDocId}`);
-    }
 
-    // 4) Готовим данные для виджета CloudPayments
-    // publicId возьмём из ENV, чтобы не хранить в коде
-    const publicId =
-      process.env.CLOUDPAYMENTS_PUBLIC_ID ||
-      process.env.CLOUDPAYMENTS_PUBLIC_KEY ||
-      '';
+      // ENV: publicId для виджета
+      const publicId =
+        process.env.CLOUDPAYMENTS_PUBLIC_ID ||
+        process.env.CLOUDPAYMENTS_PUBLIC_KEY ||
+        process.env.CLOUDPAYMENTS_PUBLIC_PK ||
+        '';
 
-    if (!publicId) {
+      if (!publicId) {
+        ctx.status = 500;
+        ctx.body = {
+          error:
+            'Missing CLOUDPAYMENTS_PUBLIC_ID in Strapi Cloud env variables',
+          hint:
+            'Add CLOUDPAYMENTS_PUBLIC_ID in Strapi Cloud → Project → Settings → Environment variables',
+        };
+        return;
+      }
+
+      // (опционально) ставим pending
+      try {
+        if ((order as any).paymentStatus !== 'paid') {
+          await strapi.db.query('api::order.order').update({
+            where: { documentId: String(orderDocId) },
+            data: { paymentStatus: 'pending' },
+          });
+        }
+      } catch {
+        // не критично
+      }
+
+      const invoiceId = String((order as any).documentId); // КЛЮЧЕВО
+      const description =
+        (order as any).orderNumber
+          ? `TWIW order #${(order as any).orderNumber}`
+          : `TWIW order ${(order as any).id ?? ''}`.trim();
+
+      ctx.body = {
+        publicId,
+        invoiceId,
+        amount,
+        currency,
+        description,
+      };
+    } catch (err: any) {
+      strapi.log.error(`[CloudPayments] pay error: ${err?.message || err}`);
       ctx.status = 500;
       ctx.body = {
-        error: 'Missing CLOUDPAYMENTS_PUBLIC_ID in environment variables',
+        error: 'CloudPayments pay failed',
+        message: err?.message || String(err),
       };
-      return;
     }
-
-    const invoiceId = String(order.documentId); // КЛЮЧЕВО: InvoiceId = documentId
-    const description =
-      order.orderNumber
-        ? `TWIW order #${order.orderNumber}`
-        : `TWIW order ${order.id}`;
-
-    ctx.body = {
-      publicId,
-      invoiceId,
-      amount,
-      currency,
-      description,
-      // можно добавить любые метаданные, которые отправишь в widget
-      // accountId: userId/email и т.п.
-    };
   },
 
   async confirm(ctx: Context) {
     const rawBody: any = (ctx.request as any).body;
-    const body = typeof rawBody === 'string' ? qs.parse(rawBody) : (rawBody || {});
+    const body =
+      typeof rawBody === 'string' ? qs.parse(rawBody) : (rawBody || {});
 
     const transactionId =
       body.TransactionId ?? body.transactionId ?? body.transaction_id;
@@ -183,7 +187,6 @@ export default {
   },
 
   async fail(ctx: Context) {
-    // Можно ставить paymentStatus='failed' по documentId, если CloudPayments пришлёт InvoiceId
     ctx.body = { code: 0 };
   },
 };
