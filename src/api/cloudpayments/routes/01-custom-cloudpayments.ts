@@ -30,7 +30,7 @@ const routes: Core.RouterConfig = {
       config: { auth: false },
     },
 
-    // ✅ NEW: verify (App -> Strapi)
+    // ✅ ВОТ ЭТО — НОВОЕ
     {
       method: 'POST',
       path: '/cloudpayments/verify',
