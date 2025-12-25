@@ -9,16 +9,14 @@ const routes: Core.RouterConfig = {
       handler: 'api::cloudpayments.cloudpayments.check',
       config: { auth: false },
     },
-    { 
+    {
       method: 'POST',
       path: '/cloudpayments/pay',
       handler: 'api::cloudpayments.cloudpayments.pay',
       config: {
-      auth: { strategies: ['users-permissions'] },
-     },
+        auth: { strategies: ['users-permissions'] },
+      },
     },
-
-
     {
       method: 'POST',
       path: '/cloudpayments/confirm',
@@ -29,6 +27,14 @@ const routes: Core.RouterConfig = {
       method: 'POST',
       path: '/cloudpayments/fail',
       handler: 'api::cloudpayments.cloudpayments.fail',
+      config: { auth: false },
+    },
+
+    // ✅ NEW: verify (App -> Strapi)
+    {
+      method: 'POST',
+      path: '/cloudpayments/verify',
+      handler: 'api::cloudpayments.cloudpayments.verify',
       config: { auth: false },
     },
   ],
