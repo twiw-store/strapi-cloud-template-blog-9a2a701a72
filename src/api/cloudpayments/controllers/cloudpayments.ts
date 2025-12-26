@@ -35,25 +35,27 @@ function getHeader(ctx: any, name: string) {
 
 /**
  * 🔐 CloudPayments HMAC
+ * ВАЖНО: CloudPayments подписывает RAW body (строку), а не распарсенный объект.
+ * Поэтому считаем HMAC строго по ctx.request.rawBody.
  */
-function verifyCloudPaymentsHmac(ctx: any, parsedBody: any) {
+function verifyCloudPaymentsHmac(ctx: any) {
   const secret = process.env.CLOUDPAYMENTS_API_PASSWORD || '';
   if (!secret) return false;
 
+  // CP шлёт заголовок X-Content-HMAC
   const received = getHeader(ctx, 'x-content-hmac');
   if (!received) return false;
 
-  const raw =
-    (ctx.request as any).rawBody ??
-    (typeof (ctx.request as any).body === 'string'
-      ? (ctx.request as any).body
-      : JSON.stringify(parsedBody ?? (ctx.request as any).body ?? {}));
+  const raw = (ctx.request as any).rawBody;
+  if (!raw || typeof raw !== 'string') return false;
 
+  // CP: base64(hmac_sha256(raw, secret))
   const computed = crypto.createHmac('sha256', secret).update(raw, 'utf8').digest('base64');
 
   try {
-    const a = Buffer.from(received, 'base64');
-    const b = Buffer.from(computed, 'base64');
+    // сравниваем в timing-safe режиме
+    const a = Buffer.from(received);
+    const b = Buffer.from(computed);
     if (a.length !== b.length) return false;
     return crypto.timingSafeEqual(a, b);
   } catch {
@@ -81,11 +83,14 @@ export default {
     const raw = (ctx.request as any).body;
     const body = typeof raw === 'string' ? qs.parse(raw) : raw || {};
 
-// if (!verifyCloudPaymentsHmac(ctx, body)) {
-//   ctx.status = 403;
-//   cpErr(ctx, 13, 'Invalid HMAC');
-//   return;
-// }
+    // Рекомендуем держать Check выключенным в CP, поэтому валидацию HMAC здесь не требуем.
+    // Если включишь Check — можешь раскомментировать и проверить HMAC, но тогда rawBody должен быть корректно настроен.
+    //
+    // if (!verifyCloudPaymentsHmac(ctx)) {
+    //   ctx.status = 403;
+    //   cpErr(ctx, 13, 'Invalid HMAC');
+    //   return;
+    // }
 
     const invoiceId = body.InvoiceId ?? body.invoiceId ?? body.invoice_id;
     if (!invoiceId) {
@@ -185,7 +190,7 @@ export default {
     const raw = (ctx.request as any).body;
     const body = typeof raw === 'string' ? qs.parse(raw) : raw || {};
 
-    if (!verifyCloudPaymentsHmac(ctx, body)) {
+    if (!verifyCloudPaymentsHmac(ctx)) {
       ctx.status = 403;
       cpErr(ctx, 13, 'Invalid HMAC');
       return;
@@ -216,7 +221,9 @@ export default {
     // ✅ мягкая проверка суммы/валюты (логируем, но не ломаем webhook)
     const amount = parseMoneyLike(body.Amount ?? body.amount);
     if (amount != null && amountsMismatch(order.total, amount)) {
-      strapi.log.warn(`[CP confirm] amount mismatch invoiceId=${invoiceId} orderTotal=${order.total} cpAmount=${amount}`);
+      strapi.log.warn(
+        `[CP confirm] amount mismatch invoiceId=${invoiceId} orderTotal=${order.total} cpAmount=${amount}`
+      );
       // не ставим paid, но и не просим CP ретраить бесконечно
       cpOk(ctx);
       return;
@@ -226,7 +233,9 @@ export default {
     if (currency) {
       const orderCurrency = String(order.currency || '').toUpperCase();
       if (orderCurrency && orderCurrency !== currency) {
-        strapi.log.warn(`[CP confirm] currency mismatch invoiceId=${invoiceId} orderCurrency=${orderCurrency} cpCurrency=${currency}`);
+        strapi.log.warn(
+          `[CP confirm] currency mismatch invoiceId=${invoiceId} orderCurrency=${orderCurrency} cpCurrency=${currency}`
+        );
         cpOk(ctx);
         return;
       }
@@ -248,7 +257,7 @@ export default {
     const raw = (ctx.request as any).body;
     const body = typeof raw === 'string' ? qs.parse(raw) : raw || {};
 
-    if (!verifyCloudPaymentsHmac(ctx, body)) {
+    if (!verifyCloudPaymentsHmac(ctx)) {
       ctx.status = 403;
       cpErr(ctx, 13, 'Invalid HMAC');
       return;
