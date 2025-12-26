@@ -15,7 +15,7 @@ const routes: Core.RouterConfig = {
       path: '/cloudpayments/pay',
       handler: 'api::cloudpayments.cloudpayments.pay',
       config: {
-        auth: { strategies: ['users-permissions'] },
+        auth: false,
       },
     },
     {
