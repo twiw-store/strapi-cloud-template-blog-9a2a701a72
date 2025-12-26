@@ -30,32 +30,49 @@ function pickCurrency(body: any) {
 }
 
 function getHeader(ctx: any, name: string) {
-  return String(ctx?.request?.headers?.[name.toLowerCase()] ?? '');
+  const key = String(name || '').toLowerCase();
+  const v = ctx?.request?.headers?.[key];
+  return Array.isArray(v) ? String(v[0] ?? '') : String(v ?? '');
+}
+
+/**
+ * Достаём RAW body как строку для HMAC.
+ * В проде rawBody часто приходит Buffer'ом — это нормально.
+ */
+function getRawBodyString(ctx: any): string | null {
+  const rb = (ctx.request as any).rawBody;
+
+  if (typeof rb === 'string') return rb;
+  if (Buffer.isBuffer(rb)) return rb.toString('utf8');
+
+  // иногда middleware кладёт в другое поле
+  const rb2 = (ctx.request as any).rawBodyBuffer;
+  if (Buffer.isBuffer(rb2)) return rb2.toString('utf8');
+
+  return null;
 }
 
 /**
  * 🔐 CloudPayments HMAC
- * ВАЖНО: CloudPayments подписывает RAW body (строку), а не распарсенный объект.
- * Поэтому считаем HMAC строго по ctx.request.rawBody.
+ * CP подписывает именно RAW body (строку form-urlencoded / json),
+ * а заголовок X-Content-HMAC — base64(hmac_sha256(raw, secret))
  */
 function verifyCloudPaymentsHmac(ctx: any) {
   const secret = process.env.CLOUDPAYMENTS_API_PASSWORD || '';
   if (!secret) return false;
 
-  // CP шлёт заголовок X-Content-HMAC
   const received = getHeader(ctx, 'x-content-hmac');
   if (!received) return false;
 
-  const raw = (ctx.request as any).rawBody;
-  if (!raw || typeof raw !== 'string') return false;
+  const raw = getRawBodyString(ctx);
+  if (!raw) return false;
 
-  // CP: base64(hmac_sha256(raw, secret))
   const computed = crypto.createHmac('sha256', secret).update(raw, 'utf8').digest('base64');
 
   try {
-    // сравниваем в timing-safe режиме
-    const a = Buffer.from(received);
-    const b = Buffer.from(computed);
+    // сравниваем БАЙТЫ, а не строки
+    const a = Buffer.from(received, 'base64');
+    const b = Buffer.from(computed, 'base64');
     if (a.length !== b.length) return false;
     return crypto.timingSafeEqual(a, b);
   } catch {
@@ -73,7 +90,7 @@ function cpErr(ctx: Context, code: number, message?: string) {
 function amountsMismatch(orderTotal: any, receivedAmount: number) {
   const total = parseMoneyLike(orderTotal);
   if (total == null) return true;
-  return Math.abs(total - receivedAmount) > 0.01; // ✅ допускаем копейки
+  return Math.abs(total - receivedAmount) > 0.01;
 }
 
 // ───────────────── controller ─────────────────
@@ -83,14 +100,9 @@ export default {
     const raw = (ctx.request as any).body;
     const body = typeof raw === 'string' ? qs.parse(raw) : raw || {};
 
-    // Рекомендуем держать Check выключенным в CP, поэтому валидацию HMAC здесь не требуем.
-    // Если включишь Check — можешь раскомментировать и проверить HMAC, но тогда rawBody должен быть корректно настроен.
-    //
-    // if (!verifyCloudPaymentsHmac(ctx)) {
-    //   ctx.status = 403;
-    //   cpErr(ctx, 13, 'Invalid HMAC');
-    //   return;
-    // }
+    // Обычно CP рекомендует выключать Check.
+    // Если включишь — можешь включить HMAC и здесь:
+    // if (!verifyCloudPaymentsHmac(ctx)) { ctx.status = 403; cpErr(ctx, 13, 'Invalid HMAC'); return; }
 
     const invoiceId = body.InvoiceId ?? body.invoiceId ?? body.invoice_id;
     if (!invoiceId) {
@@ -212,19 +224,16 @@ export default {
       return;
     }
 
-    // ✅ идемпотентность
     if (order.paymentStatus === 'paid') {
       cpOk(ctx);
       return;
     }
 
-    // ✅ мягкая проверка суммы/валюты (логируем, но не ломаем webhook)
     const amount = parseMoneyLike(body.Amount ?? body.amount);
     if (amount != null && amountsMismatch(order.total, amount)) {
       strapi.log.warn(
         `[CP confirm] amount mismatch invoiceId=${invoiceId} orderTotal=${order.total} cpAmount=${amount}`
       );
-      // не ставим paid, но и не просим CP ретраить бесконечно
       cpOk(ctx);
       return;
     }
@@ -279,7 +288,6 @@ export default {
       return;
     }
 
-    // ✅ идемпотентность
     if (existing.paymentStatus === 'paid' || existing.paymentStatus === 'failed') {
       cpOk(ctx);
       return;
