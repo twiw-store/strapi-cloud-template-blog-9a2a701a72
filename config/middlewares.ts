@@ -1,13 +1,10 @@
 export default [
-  // ✅ ОБЯЗАТЕЛЬНО ПЕРВЫМ
-  'global::raw-body',
-
   'strapi::errors',
 
   {
     name: 'strapi::cors',
     config: {
-      origin: ['*'], // dev-режим: разрешить всё
+      origin: ['*'],
     },
   },
 
@@ -16,8 +13,7 @@ export default [
   'strapi::logger',
   'strapi::query',
 
-  // ⛔ body-parser ДОЛЖЕН ИДТИ ПОСЛЕ raw-body
-  'strapi::body',
+  'strapi::body', // обычный body-parser, как и должен быть
 
   'strapi::session',
   'strapi::favicon',
