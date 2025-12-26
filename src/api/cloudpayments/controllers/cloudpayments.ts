@@ -1,3 +1,5 @@
+// src/api/cloudpayments/controllers/cloudpayments.ts
+
 import type { Context } from 'koa';
 import qs from 'qs';
 
@@ -8,7 +10,7 @@ function cpOk(ctx: Context) {
 
 function parseBody(ctx: Context) {
   const raw = (ctx.request as any).body;
-  return typeof raw === 'string' ? (qs.parse(raw) as any) : (raw || {});
+  return typeof raw === 'string' ? (qs.parse(raw) as any) : raw || {};
 }
 
 function toNumber(v: any): number | null {
@@ -30,22 +32,21 @@ function calcTotalFromItems(items: any[]): number {
 }
 
 export default {
-  // ─────────────────────────────────────────
   // OPTIONAL: если routes содержит /check — пусть не падает
   async check(ctx: Context) {
     return cpOk(ctx);
   },
 
-  // ─────────────────────────────────────────
   // OPTIONAL: если routes содержит /confirm — пусть не падает
   async confirm(ctx: Context) {
     return cpOk(ctx);
   },
 
-  // ─────────────────────────────────────────
-  // Один endpoint /cloudpayments/pay:
-  // 1) App INIT: { documentId } -> отдаём publicId/amount/invoiceId
-  // 2) CloudPayments callback Pay: { InvoiceId, Amount, Status, TransactionId } -> ставим paid
+  /**
+   * Один endpoint /cloudpayments/pay:
+   * 1) App INIT: { documentId } -> отдаём publicId/amount/invoiceId
+   * 2) CloudPayments callback Pay: { InvoiceId, Amount, Status, TransactionId, ... } -> ставим paid
+   */
   async pay(ctx: Context) {
     const body = parseBody(ctx);
 
@@ -97,6 +98,7 @@ export default {
         return;
       }
 
+      // ставим pending (не paid)
       await strapi.db.query('api::order.order').update({
         where: { documentId: String(documentId) },
         data: { paymentStatus: 'pending' },
@@ -108,18 +110,24 @@ export default {
         invoiceId: String(order.documentId),
         amount,
         currency: order.currency || 'RUB',
-        description: order.orderNumber ? `TWIW order #${order.orderNumber}` : `TWIW order ${order.id}`,
+        description: order.orderNumber
+          ? `TWIW order #${order.orderNumber}`
+          : `TWIW order ${order.id}`,
       };
       return;
     }
 
     // ✅ 2) CLOUDPAYMENTS CALLBACK PAY
     const invoiceId = body.InvoiceId ?? body.invoiceId ?? body.invoice_id;
-    const status = body.Status ?? body.status;
     const cpAmount = toNumber(body.Amount ?? body.amount);
 
+    // логируем callback целиком (важно для дебага реальных полей от CP)
+    try {
+      strapi.log.info(`[CP CALLBACK PAY] ${JSON.stringify(body)}`);
+    } catch {}
+
     // CloudPayments должен всегда получить code=0 (чтобы не ретраил)
-    if (!invoiceId || status !== 'Completed') return cpOk(ctx);
+    if (!invoiceId || cpAmount == null) return cpOk(ctx);
 
     const order = await strapi.db.query('api::order.order').findOne({
       where: { documentId: String(invoiceId) },
@@ -129,9 +137,10 @@ export default {
     if (!order) return cpOk(ctx);
     if (order.paymentStatus === 'paid') return cpOk(ctx);
 
-    // Если total=0 — НЕ блочим оплату, просто примем cpAmount
     const orderTotal = toNumber(order.total);
-    if (orderTotal && cpAmount && Math.abs(orderTotal - cpAmount) > 0.01) {
+
+    // мягкая проверка суммы (если total > 0)
+    if (orderTotal && Math.abs(orderTotal - cpAmount) > 0.01) {
       strapi.log.warn(
         `[CP PAY] Amount mismatch invoiceId=${invoiceId} orderTotal=${order.total} cpAmount=${cpAmount}`
       );
@@ -141,7 +150,7 @@ export default {
     await strapi.db.query('api::order.order').update({
       where: { documentId: String(invoiceId) },
       data: {
-        total: orderTotal && orderTotal > 0 ? orderTotal : (cpAmount ?? orderTotal ?? 0),
+        total: orderTotal && orderTotal > 0 ? orderTotal : cpAmount,
         paymentStatus: 'paid',
         orderStatus: 'paid',
         transactionId: body.TransactionId ? String(body.TransactionId) : null,
@@ -151,11 +160,14 @@ export default {
     return cpOk(ctx);
   },
 
-  // ─────────────────────────────────────────
   // CloudPayments → Fail
   async fail(ctx: Context) {
     const body = parseBody(ctx);
     const invoiceId = body.InvoiceId ?? body.invoiceId ?? body.invoice_id;
+
+    try {
+      strapi.log.info(`[CP CALLBACK FAIL] ${JSON.stringify(body)}`);
+    } catch {}
 
     if (!invoiceId) return cpOk(ctx);
 
@@ -178,7 +190,6 @@ export default {
     return cpOk(ctx);
   },
 
-  // ─────────────────────────────────────────
   // App → polling
   async status(ctx: Context) {
     const invoiceId = String(ctx.query?.invoiceId || '').trim();
