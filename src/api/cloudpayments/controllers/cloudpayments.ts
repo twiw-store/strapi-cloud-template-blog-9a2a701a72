@@ -81,11 +81,11 @@ export default {
     const raw = (ctx.request as any).body;
     const body = typeof raw === 'string' ? qs.parse(raw) : raw || {};
 
-    if (!verifyCloudPaymentsHmac(ctx, body)) {
-      ctx.status = 403;
-      cpErr(ctx, 13, 'Invalid HMAC');
-      return;
-    }
+// if (!verifyCloudPaymentsHmac(ctx, body)) {
+//   ctx.status = 403;
+//   cpErr(ctx, 13, 'Invalid HMAC');
+//   return;
+// }
 
     const invoiceId = body.InvoiceId ?? body.invoiceId ?? body.invoice_id;
     if (!invoiceId) {
