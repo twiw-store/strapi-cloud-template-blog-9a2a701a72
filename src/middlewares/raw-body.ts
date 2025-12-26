@@ -1,47 +1,50 @@
 import type { Core } from '@strapi/strapi';
-import { PassThrough } from 'stream';
+import { Readable } from 'stream';
 
 const rawBodyMiddleware: Core.MiddlewareFactory = () => {
   return async (ctx, next) => {
-    // только CloudPayments
+    // Только CloudPayments endpoints
     if (!ctx.request.path.startsWith('/api/cloudpayments')) {
-      await next();
-      return;
+      return next();
     }
 
-    // если уже есть rawBody — не трогаем
+    // Уже есть rawBody — не трогаем
     if ((ctx.request as any).rawBody != null) {
-      await next();
-      return;
+      return next();
     }
 
-    const req = ctx.req; // это IncomingMessage (важно сохранить его свойства)
+    const req = ctx.req;
 
-    const tee = new PassThrough();
+    // Считываем тело ПОЛНОСТЬЮ до next()
     const chunks: Buffer[] = [];
-
-    req.on('data', (chunk: any) => {
+    for await (const chunk of req) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    });
+    }
 
-    req.on('end', () => {
-      (ctx.request as any).rawBody = Buffer.concat(chunks).toString('utf8');
-    });
+    const buf = Buffer.concat(chunks);
+    const raw = buf.toString('utf8');
 
-    // прокидываем оригинальный поток в tee
-    req.pipe(tee);
+    (ctx.request as any).rawBody = raw;
 
-    // 🔥 КЛЮЧ: сохраняем свойства оригинального req, чтобы cors/koa не падали
-    (tee as any).headers = req.headers;
-    (tee as any).method = req.method;
-    (tee as any).url = req.url;
-    (tee as any).socket = req.socket;
+    // ВАЖНО forcing: даём Strapi body-parser новый поток
+    const cloned = Readable.from(buf);
 
-    // подменяем req на tee (но tee выглядит как req для Koa)
-    (ctx as any).req = tee;
-    (ctx.request as any).req = tee;
+    // Прокидываем обязательные поля, чтобы Koa/Strapi не ломались
+    (cloned as any).headers = req.headers;
+    (cloned as any).method = req.method;
+    (cloned as any).url = req.url;
+    (cloned as any).socket = req.socket;
 
-    await next();
+    // Обновим content-length (часто критично)
+    (cloned as any).headers = {
+      ...(req.headers || {}),
+      'content-length': String(buf.length),
+    };
+
+    (ctx as any).req = cloned;
+    (ctx.request as any).req = cloned;
+
+    return next();
   };
 };
 

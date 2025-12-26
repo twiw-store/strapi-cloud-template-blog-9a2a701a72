@@ -1,4 +1,3 @@
-// src/api/cloudpayments/controllers/cloudpayments.ts
 import type { Context } from 'koa';
 import qs from 'qs';
 import crypto from 'crypto';
@@ -30,48 +29,34 @@ function pickCurrency(body: any) {
 }
 
 function getHeader(ctx: any, name: string) {
-  const key = String(name || '').toLowerCase();
-  const v = ctx?.request?.headers?.[key];
-  return Array.isArray(v) ? String(v[0] ?? '') : String(v ?? '');
-}
-
-/**
- * Достаём RAW body как строку для HMAC.
- * В проде rawBody часто приходит Buffer'ом — это нормально.
- */
-function getRawBodyString(ctx: any): string | null {
-  const rb = (ctx.request as any).rawBody;
-
-  if (typeof rb === 'string') return rb;
-  if (Buffer.isBuffer(rb)) return rb.toString('utf8');
-
-  // иногда middleware кладёт в другое поле
-  const rb2 = (ctx.request as any).rawBodyBuffer;
-  if (Buffer.isBuffer(rb2)) return rb2.toString('utf8');
-
-  return null;
+  // Koa lowercases headers
+  return String(ctx?.request?.headers?.[name.toLowerCase()] ?? '');
 }
 
 /**
  * 🔐 CloudPayments HMAC
- * CP подписывает именно RAW body (строку form-urlencoded / json),
- * а заголовок X-Content-HMAC — base64(hmac_sha256(raw, secret))
+ * ВАЖНО: проверка делается по RAW body (байты), а не по распарсенному объекту.
+ * CP присылает подпись в header: X-Content-HMAC (base64).
  */
 function verifyCloudPaymentsHmac(ctx: any) {
   const secret = process.env.CLOUDPAYMENTS_API_PASSWORD || '';
   if (!secret) return false;
 
-  const received = getHeader(ctx, 'x-content-hmac');
+  // CloudPayments может слать по-разному
+  const received =
+    getHeader(ctx, 'x-content-hmac') ||
+    getHeader(ctx, 'content-hmac') ||
+    getHeader(ctx, 'content-hmac-sha256');
+
   if (!received) return false;
 
-  const raw = getRawBodyString(ctx);
-  if (!raw) return false;
+  const raw = (ctx.request as any).rawBody;
+  if (typeof raw !== 'string') return false;
 
   const computed = crypto.createHmac('sha256', secret).update(raw, 'utf8').digest('base64');
 
   try {
-    // сравниваем БАЙТЫ, а не строки
-    const a = Buffer.from(received, 'base64');
+    const a = Buffer.from(received.trim(), 'base64');
     const b = Buffer.from(computed, 'base64');
     if (a.length !== b.length) return false;
     return crypto.timingSafeEqual(a, b);
@@ -93,6 +78,17 @@ function amountsMismatch(orderTotal: any, receivedAmount: number) {
   return Math.abs(total - receivedAmount) > 0.01;
 }
 
+function calcTotalFromItems(items: any[]): number {
+  if (!Array.isArray(items)) return 0;
+  const sum = items.reduce((acc, it) => {
+    const price = typeof it?.price === 'number' ? it.price : Number(it?.price || 0);
+    const qty = typeof it?.quantity === 'number' ? it.quantity : Number(it?.quantity || 1);
+    return acc + price * qty;
+  }, 0);
+  // округление до 2 знаков
+  return Math.round(sum * 100) / 100;
+}
+
 // ───────────────── controller ─────────────────
 
 export default {
@@ -100,9 +96,14 @@ export default {
     const raw = (ctx.request as any).body;
     const body = typeof raw === 'string' ? qs.parse(raw) : raw || {};
 
-    // Обычно CP рекомендует выключать Check.
-    // Если включишь — можешь включить HMAC и здесь:
-    // if (!verifyCloudPaymentsHmac(ctx)) { ctx.status = 403; cpErr(ctx, 13, 'Invalid HMAC'); return; }
+    // Обычно Check в CP лучше держать выключенным — поэтому HMAC здесь не обязателен.
+    // Если включишь Check — можешь включить проверку:
+    //
+    // if (!verifyCloudPaymentsHmac(ctx)) {
+    //   ctx.status = 403;
+    //   cpErr(ctx, 13, 'Invalid HMAC');
+    //   return;
+    // }
 
     const invoiceId = body.InvoiceId ?? body.invoiceId ?? body.invoice_id;
     if (!invoiceId) {
@@ -153,9 +154,11 @@ export default {
       return;
     }
 
+    // берём total + Item (на случай если total ещё 0)
     const order = await strapi.db.query('api::order.order').findOne({
       where: { documentId: String(documentId) },
       select: ['documentId', 'id', 'orderNumber', 'total', 'currency', 'paymentStatus'] as any,
+      populate: { Item: true } as any,
     });
 
     if (!order) {
@@ -170,7 +173,20 @@ export default {
       return;
     }
 
-    const amount = parseMoneyLike(order.total);
+    let amount = parseMoneyLike(order.total);
+
+    // ✅ если total нулевой — считаем из Item и обновляем заказ
+    if (!amount || amount <= 0) {
+      const computedTotal = calcTotalFromItems(order.Item || []);
+      if (computedTotal > 0) {
+        amount = computedTotal;
+        await strapi.db.query('api::order.order').update({
+          where: { documentId: String(documentId) },
+          data: { total: computedTotal },
+        });
+      }
+    }
+
     if (!amount || amount <= 0) {
       ctx.status = 400;
       ctx.body = { error: 'Invalid order total' };
