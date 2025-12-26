@@ -1,3 +1,4 @@
+// src/api/cloudpayments/controllers/cloudpayments.ts
 import type { Context } from 'koa';
 import qs from 'qs';
 import crypto from 'crypto';
@@ -34,8 +35,6 @@ function getHeader(ctx: any, name: string) {
 
 /**
  * 🔐 CloudPayments HMAC
- * CloudPayments присылает base64 в X-Content-HMAC.
- * Считаем HMAC-SHA256 от RAW body (или best-effort fallback).
  */
 function verifyCloudPaymentsHmac(ctx: any, parsedBody: any) {
   const secret = process.env.CLOUDPAYMENTS_API_PASSWORD || '';
@@ -62,23 +61,35 @@ function verifyCloudPaymentsHmac(ctx: any, parsedBody: any) {
   }
 }
 
+function cpOk(ctx: Context) {
+  ctx.body = { code: 0 };
+}
+function cpErr(ctx: Context, code: number, message?: string) {
+  ctx.body = message ? { code, message } : { code };
+}
+
+function amountsMismatch(orderTotal: any, receivedAmount: number) {
+  const total = parseMoneyLike(orderTotal);
+  if (total == null) return true;
+  return Math.abs(total - receivedAmount) > 0.01; // ✅ допускаем копейки
+}
+
 // ───────────────── controller ─────────────────
 
 export default {
-  // ───────────── CHECK (CloudPayments -> Strapi) ─────────────
   async check(ctx: Context) {
     const raw = (ctx.request as any).body;
     const body = typeof raw === 'string' ? qs.parse(raw) : raw || {};
 
     if (!verifyCloudPaymentsHmac(ctx, body)) {
       ctx.status = 403;
-      ctx.body = { code: 13, message: 'Invalid HMAC' };
+      cpErr(ctx, 13, 'Invalid HMAC');
       return;
     }
 
     const invoiceId = body.InvoiceId ?? body.invoiceId ?? body.invoice_id;
     if (!invoiceId) {
-      ctx.body = { code: 10, message: 'Missing InvoiceId' };
+      cpErr(ctx, 10, 'Missing InvoiceId');
       return;
     }
 
@@ -88,37 +99,33 @@ export default {
     });
 
     if (!order) {
-      ctx.body = { code: 10, message: 'Order not found' };
+      cpErr(ctx, 10, 'Order not found');
       return;
     }
 
     if (order.paymentStatus === 'paid') {
-      ctx.body = { code: 11, message: 'Already paid' };
+      cpErr(ctx, 11, 'Already paid');
       return;
     }
 
     const amount = parseMoneyLike(body.Amount ?? body.amount);
-    if (amount != null) {
-      const total = parseMoneyLike(order.total);
-      if (total == null || Math.abs(total - amount) > 0.0001) {
-        ctx.body = { code: 12, message: 'Amount mismatch' };
-        return;
-      }
+    if (amount != null && amountsMismatch(order.total, amount)) {
+      cpErr(ctx, 12, 'Amount mismatch');
+      return;
     }
 
     const currency = pickCurrency(body);
     if (currency) {
       const orderCurrency = String(order.currency || '').toUpperCase();
       if (orderCurrency && orderCurrency !== currency) {
-        ctx.body = { code: 12, message: 'Currency mismatch' };
+        cpErr(ctx, 12, 'Currency mismatch');
         return;
       }
     }
 
-    ctx.body = { code: 0 };
+    cpOk(ctx);
   },
 
-  // ───────────── PAY (App -> Strapi) ─────────────
   async pay(ctx: Context) {
     const body = (ctx.request as any).body || {};
     const documentId = body.documentId || body.orderDocumentId;
@@ -174,20 +181,19 @@ export default {
     };
   },
 
-  // ───────────── CONFIRM (CloudPayments -> Strapi) ─────────────
   async confirm(ctx: Context) {
     const raw = (ctx.request as any).body;
     const body = typeof raw === 'string' ? qs.parse(raw) : raw || {};
 
     if (!verifyCloudPaymentsHmac(ctx, body)) {
       ctx.status = 403;
-      ctx.body = { code: 13, message: 'Invalid HMAC' };
+      cpErr(ctx, 13, 'Invalid HMAC');
       return;
     }
 
     const invoiceId = body.InvoiceId ?? body.invoiceId ?? body.invoice_id;
     if (!invoiceId) {
-      ctx.body = { code: 0 };
+      cpOk(ctx);
       return;
     }
 
@@ -197,29 +203,31 @@ export default {
     });
 
     if (!order) {
-      ctx.body = { code: 0 };
+      cpOk(ctx);
       return;
     }
 
+    // ✅ идемпотентность
     if (order.paymentStatus === 'paid') {
-      ctx.body = { code: 0 };
+      cpOk(ctx);
       return;
     }
 
+    // ✅ мягкая проверка суммы/валюты (логируем, но не ломаем webhook)
     const amount = parseMoneyLike(body.Amount ?? body.amount);
-    if (amount != null) {
-      const total = parseMoneyLike(order.total);
-      if (total == null || Math.abs(total - amount) > 0.0001) {
-        ctx.body = { code: 12, message: 'Amount mismatch' };
-        return;
-      }
+    if (amount != null && amountsMismatch(order.total, amount)) {
+      strapi.log.warn(`[CP confirm] amount mismatch invoiceId=${invoiceId} orderTotal=${order.total} cpAmount=${amount}`);
+      // не ставим paid, но и не просим CP ретраить бесконечно
+      cpOk(ctx);
+      return;
     }
 
     const currency = pickCurrency(body);
     if (currency) {
       const orderCurrency = String(order.currency || '').toUpperCase();
       if (orderCurrency && orderCurrency !== currency) {
-        ctx.body = { code: 12, message: 'Currency mismatch' };
+        strapi.log.warn(`[CP confirm] currency mismatch invoiceId=${invoiceId} orderCurrency=${orderCurrency} cpCurrency=${currency}`);
+        cpOk(ctx);
         return;
       }
     }
@@ -233,23 +241,22 @@ export default {
       },
     });
 
-    ctx.body = { code: 0 };
+    cpOk(ctx);
   },
 
-  // ───────────── FAIL (CloudPayments -> Strapi) ─────────────
   async fail(ctx: Context) {
     const raw = (ctx.request as any).body;
     const body = typeof raw === 'string' ? qs.parse(raw) : raw || {};
 
     if (!verifyCloudPaymentsHmac(ctx, body)) {
       ctx.status = 403;
-      ctx.body = { code: 13 };
+      cpErr(ctx, 13, 'Invalid HMAC');
       return;
     }
 
     const invoiceId = body.InvoiceId ?? body.invoiceId ?? body.invoice_id;
     if (!invoiceId) {
-      ctx.body = { code: 0 };
+      cpOk(ctx);
       return;
     }
 
@@ -259,12 +266,13 @@ export default {
     });
 
     if (!existing) {
-      ctx.body = { code: 0 };
+      cpOk(ctx);
       return;
     }
 
-    if (existing.paymentStatus === 'paid') {
-      ctx.body = { code: 0 };
+    // ✅ идемпотентность
+    if (existing.paymentStatus === 'paid' || existing.paymentStatus === 'failed') {
+      cpOk(ctx);
       return;
     }
 
@@ -276,101 +284,36 @@ export default {
       },
     });
 
-    ctx.body = { code: 0 };
+    cpOk(ctx);
   },
 
-  // ───────────── VERIFY (App -> Strapi) ─────────────
-  async verify(ctx: Context) {
-    const body = (ctx.request as any).body || {};
-
-    const invoiceId = body.InvoiceId ?? body.invoiceId ?? body.invoice_id ?? body.documentId;
-    const transactionIdRaw = body.TransactionId ?? body.transactionId;
+  async status(ctx: Context) {
+    const invoiceId = String(ctx.query?.invoiceId || '').trim();
 
     if (!invoiceId) {
       ctx.status = 400;
-      ctx.body = { error: 'InvoiceId (documentId) is required' };
+      ctx.body = { error: 'invoiceId is required' };
       return;
     }
-
-    const txId = Number(transactionIdRaw);
-    if (!Number.isFinite(txId)) {
-      ctx.status = 400;
-      ctx.body = { error: 'TransactionId is required and must be a number' };
-      return;
-    }
-
-    const publicId = process.env.CLOUDPAYMENTS_PUBLIC_ID || '';
-    const apiSecret = process.env.CLOUDPAYMENTS_API_SECRET || '';
-
-    if (!publicId || !apiSecret) {
-      ctx.status = 500;
-      ctx.body = { error: 'Missing CLOUDPAYMENTS_PUBLIC_ID or CLOUDPAYMENTS_API_SECRET' };
-      return;
-    }
-
-    const auth = Buffer.from(`${publicId}:${apiSecret}`).toString('base64');
-
-    const res = await fetch('https://api.cloudpayments.ru/payments/find', {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${auth}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ TransactionId: txId }),
-    });
-
-    const json = (await res.json()) as any;
-
-    if (!res.ok || !json?.Success) {
-      ctx.status = 200;
-      ctx.body = { ok: false, verified: false, cp: json };
-      return;
-    }
-
-    const model = json?.Model || {};
-    const succeeded = Boolean(model?.Success);
 
     const order = await strapi.db.query('api::order.order').findOne({
-      where: { documentId: String(invoiceId) },
-      select: ['documentId', 'paymentStatus'] as any,
+      where: { documentId: invoiceId },
+      select: ['documentId', 'paymentStatus', 'orderStatus'] as any,
     });
 
     if (!order) {
       ctx.status = 404;
-      ctx.body = { ok: true, verified: succeeded, error: 'Order not found', invoiceId: String(invoiceId) };
+      ctx.body = { ok: false, invoiceId, found: false };
       return;
     }
-
-    if (order.paymentStatus === 'paid') {
-      ctx.status = 200;
-      ctx.body = { ok: true, verified: true, status: 'already_paid' };
-      return;
-    }
-
-    if (succeeded) {
-      await strapi.db.query('api::order.order').update({
-        where: { documentId: String(invoiceId) },
-        data: {
-          paymentStatus: 'paid',
-          orderStatus: 'paid',
-          transactionId: String(txId),
-        },
-      });
-
-      ctx.status = 200;
-      ctx.body = { ok: true, verified: true };
-      return;
-    }
-
-    await strapi.db.query('api::order.order').update({
-      where: { documentId: String(invoiceId) },
-      data: {
-        paymentStatus: 'failed',
-        transactionId: String(txId),
-      },
-    });
 
     ctx.status = 200;
-    ctx.body = { ok: true, verified: false, reason: 'cp_not_succeeded' };
+    ctx.body = {
+      ok: true,
+      found: true,
+      invoiceId,
+      paymentStatus: order.paymentStatus || 'pending',
+      orderStatus: order.orderStatus || 'pending',
+    };
   },
 };

@@ -1,3 +1,4 @@
+// src/api/cloudpayments/routes/cloudpayments.ts
 import type { Core } from '@strapi/strapi';
 
 const routes: Core.RouterConfig = {
@@ -30,11 +31,11 @@ const routes: Core.RouterConfig = {
       config: { auth: false },
     },
 
-    // ✅ ВОТ ЭТО — НОВОЕ
+    // ✅ polling endpoint для приложения
     {
-      method: 'POST',
-      path: '/cloudpayments/verify',
-      handler: 'api::cloudpayments.cloudpayments.verify',
+      method: 'GET',
+      path: '/cloudpayments/status',
+      handler: 'api::cloudpayments.cloudpayments.status',
       config: { auth: false },
     },
   ],
