@@ -1,5 +1,3 @@
-// src/api/cloudpayments/controllers/cloudpayments.ts
-
 import type { Context } from 'koa';
 import qs from 'qs';
 
@@ -21,11 +19,10 @@ function toNumber(v: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-// total в Order schema = integer → приводим к integer
+// total у тебя integer → работаем int
 function toIntMoney(v: any): number | null {
   const n = toNumber(v);
   if (n == null) return null;
-  // CP может прислать "1.00", у тебя total integer → делаем 1
   return Math.round(n);
 }
 
@@ -39,35 +36,43 @@ function calcTotalFromItemsInt(items: any[]): number {
   return Math.round(sum);
 }
 
+function normalizePaymentStatus(list: any[]) {
+  // если ХОТЬ ОДНА запись paid/paid_captured → считаем paid
+  const statuses = new Set(list.map((x) => String(x?.paymentStatus || '').toLowerCase()));
+  if (statuses.has('paid_captured')) return 'paid_captured';
+  if (statuses.has('paid')) return 'paid';
+  if (statuses.has('failed')) return 'failed';
+  if (statuses.has('processing')) return 'processing';
+  return 'pending';
+}
+
 export default {
-  /**
-   * Один endpoint /cloudpayments/pay:
-   * 1) App INIT: { documentId } -> отдаём publicId/amount/invoiceId
-   * 2) CloudPayments callback Pay: { InvoiceId, Amount, Status, TransactionId, ... } -> ставим paid
-   */
   async pay(ctx: Context) {
     const body = parseBody(ctx);
-
-    // ✅ Делаем query как any, чтобы TS не трахал мозг enum-полями (paymentStatus и т.д.)
     const orderQuery = strapi.db.query('api::order.order') as any;
 
-    // ─────────────────────────────────────────
-    // ✅ 1) APP INIT (виджет)
+    // ✅ 1) APP INIT
     const documentId = body.documentId || body.orderDocumentId;
     if (documentId) {
-      const order = await orderQuery.findOne({
+      // ВАЖНО: findMany, потому что может быть draft+published с одинаковым documentId
+      const orders = await orderQuery.findMany({
         where: { documentId: String(documentId) },
-        select: ['documentId', 'id', 'orderNumber', 'total', 'currency', 'paymentStatus'],
+        select: ['id', 'documentId', 'orderNumber', 'total', 'currency', 'paymentStatus', 'publishedAt'],
         populate: { Item: true },
+        orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }],
+        limit: 10,
       });
 
+      const order = orders?.[0];
       if (!order) {
         ctx.status = 404;
         ctx.body = { error: 'Order not found' };
         return;
       }
 
-      if (order.paymentStatus === 'paid' || order.paymentStatus === 'paid_captured') {
+      // если уже paid в любой записи — блокируем
+      const agg = normalizePaymentStatus(orders);
+      if (agg === 'paid' || agg === 'paid_captured') {
         ctx.status = 409;
         ctx.body = { error: 'Order already paid' };
         return;
@@ -75,15 +80,14 @@ export default {
 
       let amount = toIntMoney(order.total);
 
-      // если total = 0 → считаем из Item и обновляем total
       if (!amount || amount <= 0) {
         const computed = calcTotalFromItemsInt(order.Item || []);
         if (computed > 0) {
           amount = computed;
-          await orderQuery.update({
-            where: { documentId: String(documentId) },
-            data: { total: computed },
-          });
+          // обновим total у всех версий документа
+          for (const o of orders) {
+            await orderQuery.update({ where: { id: o.id }, data: { total: computed } });
+          }
         }
       }
 
@@ -100,17 +104,19 @@ export default {
         return;
       }
 
-      // ставим pending (не paid)
-      await orderQuery.update({
-        where: { documentId: String(documentId) },
-        data: { paymentStatus: 'pending' },
-      });
+      // ставим pending всем записям документа (чтобы status/админка не читали другую “ветку”)
+      for (const o of orders) {
+        await orderQuery.update({
+          where: { id: o.id },
+          data: { paymentStatus: 'pending' },
+        });
+      }
 
       ctx.status = 200;
       ctx.body = {
         publicId,
         invoiceId: String(order.documentId),
-        amount, // integer
+        amount,
         currency: order.currency || 'RUB',
         description: order.orderNumber
           ? `TWIW order #${order.orderNumber}`
@@ -119,7 +125,6 @@ export default {
       return;
     }
 
-    // ─────────────────────────────────────────
     // ✅ 2) CLOUDPAYMENTS CALLBACK PAY
     const invoiceId = body.InvoiceId ?? body.invoiceId ?? body.invoice_id;
     const status = String(body.Status ?? body.status ?? '').trim();
@@ -129,46 +134,50 @@ export default {
       strapi.log.info(`[CP CALLBACK PAY] ${JSON.stringify(body)}`);
     } catch {}
 
-    // CP всегда должен получить code=0, иначе ретраи
-    // ВАЖНО: оплачиваем ТОЛЬКО если Completed
+    // всегда code=0, но оплачиваем только Completed
     if (!invoiceId || status !== 'Completed' || cpAmount == null) return cpOk(ctx);
 
-    const order = await orderQuery.findOne({
+    const orders = await orderQuery.findMany({
       where: { documentId: String(invoiceId) },
-      select: ['paymentStatus', 'total'],
+      select: ['id', 'total', 'paymentStatus'],
+      orderBy: [{ id: 'desc' }],
+      limit: 10,
     });
 
-    if (!order) return cpOk(ctx);
-    if (order.paymentStatus === 'paid' || order.paymentStatus === 'paid_captured') return cpOk(ctx);
+    if (!orders?.length) return cpOk(ctx);
 
-    const orderTotal = toIntMoney(order.total);
+    const agg = normalizePaymentStatus(orders);
+    if (agg === 'paid' || agg === 'paid_captured') return cpOk(ctx);
 
-    // мягкая проверка суммы (если total > 0)
+    const orderTotal = toIntMoney(orders[0]?.total);
+
     if (orderTotal && Math.abs(orderTotal - cpAmount) > 0) {
       strapi.log.warn(
-        `[CP PAY] Amount mismatch invoiceId=${invoiceId} orderTotal=${order.total} cpAmount=${cpAmount}`
+        `[CP PAY] Amount mismatch invoiceId=${invoiceId} orderTotal=${orderTotal} cpAmount=${cpAmount}`
       );
       return cpOk(ctx);
     }
 
-    await orderQuery.update({
-      where: { documentId: String(invoiceId) },
-      data: {
-        total: orderTotal && orderTotal > 0 ? orderTotal : cpAmount,
-        paymentStatus: 'paid',
-        orderStatus: 'paid',
-        transactionId: body.TransactionId ? String(body.TransactionId) : null,
-      },
-    });
+    // ✅ КЛЮЧ: обновляем ВСЕ записи по documentId
+    for (const o of orders) {
+      await orderQuery.update({
+        where: { id: o.id },
+        data: {
+          total: orderTotal && orderTotal > 0 ? orderTotal : cpAmount,
+          paymentStatus: 'paid',
+          orderStatus: 'paid',
+          transactionId: body.TransactionId ? String(body.TransactionId) : null,
+        },
+      });
+    }
 
     return cpOk(ctx);
   },
 
-  // ─────────────────────────────────────────
-  // CloudPayments → Fail
   async fail(ctx: Context) {
     const body = parseBody(ctx);
     const invoiceId = body.InvoiceId ?? body.invoiceId ?? body.invoice_id;
+    const status = String(body.Status ?? body.status ?? '').trim();
 
     const orderQuery = strapi.db.query('api::order.order') as any;
 
@@ -178,30 +187,36 @@ export default {
 
     if (!invoiceId) return cpOk(ctx);
 
-    const order = await orderQuery.findOne({
+    const orders = await orderQuery.findMany({
       where: { documentId: String(invoiceId) },
-      select: ['paymentStatus'],
+      select: ['id', 'paymentStatus'],
+      orderBy: [{ id: 'desc' }],
+      limit: 10,
     });
 
-    if (!order) return cpOk(ctx);
-    if (order.paymentStatus === 'paid' || order.paymentStatus === 'paid_captured') return cpOk(ctx);
+    if (!orders?.length) return cpOk(ctx);
 
-    await orderQuery.update({
-      where: { documentId: String(invoiceId) },
-      data: {
-        paymentStatus: 'failed',
-        transactionId: body.TransactionId ? String(body.TransactionId) : null,
-      },
-    });
+    const agg = normalizePaymentStatus(orders);
+    if (agg === 'paid' || agg === 'paid_captured') return cpOk(ctx);
+
+    // fail ставим всем (но только если это реально Declined/Failed)
+    if (status && status !== 'Declined' && status !== 'Failed') return cpOk(ctx);
+
+    for (const o of orders) {
+      await orderQuery.update({
+        where: { id: o.id },
+        data: {
+          paymentStatus: 'failed',
+          transactionId: body.TransactionId ? String(body.TransactionId) : null,
+        },
+      });
+    }
 
     return cpOk(ctx);
   },
 
-  // ─────────────────────────────────────────
-  // App → polling
   async status(ctx: Context) {
     const invoiceId = String(ctx.query?.invoiceId || '').trim();
-
     if (!invoiceId) {
       ctx.status = 400;
       ctx.body = { error: 'invoiceId is required' };
@@ -210,25 +225,33 @@ export default {
 
     const orderQuery = strapi.db.query('api::order.order') as any;
 
-    const order = await orderQuery.findOne({
+    const orders = await orderQuery.findMany({
       where: { documentId: invoiceId },
-      select: ['documentId', 'paymentStatus', 'orderStatus', 'transactionId'],
+      select: ['id', 'documentId', 'paymentStatus', 'orderStatus', 'transactionId', 'publishedAt'],
+      orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }],
+      limit: 10,
     });
 
-    if (!order) {
+    if (!orders?.length) {
       ctx.status = 404;
       ctx.body = { ok: false, found: false, invoiceId };
       return;
     }
+
+    const aggPay = normalizePaymentStatus(orders);
+    const best = orders[0];
 
     ctx.status = 200;
     ctx.body = {
       ok: true,
       found: true,
       invoiceId,
-      paymentStatus: order.paymentStatus || 'pending',
-      orderStatus: order.orderStatus || 'pending',
-      transactionId: order.transactionId || null,
+      paymentStatus: aggPay,
+      orderStatus:
+        aggPay === 'paid' || aggPay === 'paid_captured'
+          ? 'paid'
+          : (best.orderStatus || 'pending'),
+      transactionId: best.transactionId || null,
     };
   },
 };
