@@ -83,8 +83,7 @@ async function fillLangAndCurrencyFromProfile(data: any) {
     data.language ||
     data.lang ||
     data.locale ||
-    (data.customer &&
-      (data.customer.language || data.customer.lang || data.customer.locale));
+    (data.customer && (data.customer.language || data.customer.lang || data.customer.locale));
 
   const normalizedLang = normalizeLang(langFromPayload);
   if (normalizedLang) {
@@ -96,10 +95,7 @@ async function fillLangAndCurrencyFromProfile(data: any) {
     data.currency ||
     data.selectedCurrency ||
     data.currencyCode ||
-    (data.customer &&
-      (data.customer.currency ||
-        data.customerCurrency ||
-        data.customer.selectedCurrency));
+    (data.customer && (data.customer.currency || data.customerCurrency || data.customer.selectedCurrency));
 
   if (currencyFromPayload) {
     data.currency = String(currencyFromPayload).toUpperCase().slice(0, 3);
@@ -117,10 +113,7 @@ async function fillLangAndCurrencyFromProfile(data: any) {
     }
 
     if (userId) {
-      const user = await strapi.entityService.findOne(
-        'plugin::users-permissions.user',
-        Number(userId)
-      );
+      const user = await strapi.entityService.findOne('plugin::users-permissions.user', Number(userId));
       const u = user as any;
 
       if (!data.language && u?.language) {
@@ -138,13 +131,28 @@ async function fillLangAndCurrencyFromProfile(data: any) {
     strapi.log.warn('[ORDER] cannot resolve user lang/currency');
   }
 
-  // ⚠️ ВАЖНО: БОЛЬШЕ НИКАКИХ дефолтов RU/RUB
-  // Пусть язык/валюта будут undefined, если никто их не передал / не сохранил.
-  // Письма всё равно форматируем с order.currency || 'RUB' ниже.
-
   strapi.log.info(
     `[ORDER] fillLangAndCurrencyFromProfile → language=${data.language || '-'}, currency=${data.currency || '-'}`
   );
+}
+
+// ✅ СИНХРОНИЗАЦИЯ paymentStatus ↔ orderStatus (чтобы CP "paid" не оставлял orderStatus=pending)
+function syncPaidStatuses(data: any) {
+  // если пришёл paymentStatus — он "истина"
+  if ('paymentStatus' in data) {
+    const ps = String(data.paymentStatus || '').trim().toLowerCase();
+    if (ps === 'paid') data.orderStatus = 'paid';
+    if (ps === 'failed') {
+      // не меняем orderStatus на failed (его нет в ALLOWED_STATUS), оставляем как есть
+    }
+  }
+
+  // если пришёл orderStatus — нормализуем и проталкиваем в paymentStatus
+  if ('orderStatus' in data) {
+    const os = toStatusCode(data.orderStatus);
+    data.orderStatus = os;
+    if (os === 'paid') data.paymentStatus = 'paid';
+  }
 }
 
 // ========== EMAIL HTML ==========
@@ -308,8 +316,8 @@ function renderOrderEmailHtml(order: any) {
           <div style="background:#F9FAFB; border:1px solid #E5E7EB; border-radius:10px; padding:10px 12px;">
             <div style="font-weight:600; color:#111827; font-size:14px; margin-bottom:4px;">${t.delivery}</div>
             <div style="color:#374151; font-size:14px;">${order?.deliveryMethod || 'courier'}${
-    address ? ` • ${address}` : ''
-  }</div>
+              address ? ` • ${address}` : ''
+            }</div>
           </div>
         </td></tr>
 
@@ -365,9 +373,7 @@ async function sendBothEmails(order: any) {
       )}`,
       html,
     });
-    strapi.log.info(
-      `[EMAIL→CLIENT] ok to=${clientTo} messageId=${(res1 as any)?.messageId ?? '-'}`
-    );
+    strapi.log.info(`[EMAIL→CLIENT] ok to=${clientTo} messageId=${(res1 as any)?.messageId ?? '-'}`);
   } else {
     strapi.log.warn(`[EMAIL→CLIENT] skip: empty customerEmail for ${order.orderNumber}`);
   }
@@ -391,11 +397,7 @@ async function sendBothEmails(order: any) {
       to: adminTo,
       subject: `Новый оплаченный заказ ${order.orderNumber}`,
       text:
-        `Сумма: ${fmtCurrency(
-          Number(order.total || 0),
-          order.currency || 'RUB',
-          lang
-        )}\n` +
+        `Сумма: ${fmtCurrency(Number(order.total || 0), order.currency || 'RUB', lang)}\n` +
         `Клиент: ${order.customerEmail}\n` +
         `Доставка: ${order.deliveryMethod || '-'}\n` +
         `${lines}`,
@@ -425,14 +427,15 @@ export default {
     if (!data) return;
 
     await fillLangAndCurrencyFromProfile(data);
-    data.orderStatus = toStatusCode(data.orderStatus);
+
+    // ✅ синхрон статусов до нормализации
+    syncPaidStatuses(data);
+
+    // ✅ нормализуем orderStatus, но paymentStatus уже мог протолкнуть paid
+    if ('orderStatus' in data) data.orderStatus = toStatusCode(data.orderStatus);
     if (!data.orderNumber) data.orderNumber = makeOrderNumber();
 
-    const items = Array.isArray(data.Item)
-      ? data.Item
-      : Array.isArray(data.items)
-      ? data.items
-      : [];
+    const items = Array.isArray(data.Item) ? data.Item : Array.isArray(data.items) ? data.items : [];
 
     if (items.length) {
       items.forEach((i) => {
@@ -448,7 +451,7 @@ export default {
     const { data, where } = event.params;
     if (!data) return;
 
-    const id = Number(where?.id || data?.id);
+    const id = Number(where?.id || (data as any)?.id);
     if (id) {
       try {
         const prev = await strapi.entityService.findOne('api::order.order', id, {
@@ -459,21 +462,21 @@ export default {
     }
 
     await fillLangAndCurrencyFromProfile(data);
+
+    // ✅ синхронизация paymentStatus ↔ orderStatus (главный фикс)
+    syncPaidStatuses(data);
+
     if ('orderStatus' in data) data.orderStatus = toStatusCode(data.orderStatus);
     if (!data.orderNumber) data.orderNumber = makeOrderNumber();
 
-    const items = Array.isArray(data.Item)
-      ? data.Item
-      : Array.isArray(data.items)
-      ? data.items
-      : [];
+    const items = Array.isArray((data as any).Item) ? (data as any).Item : Array.isArray((data as any).items) ? (data as any).items : [];
 
     if (items.length) {
       items.forEach((i) => {
         i.price = Number(i.price) || 0;
         i.quantity = Number(i.quantity) || 0;
       });
-      data.total = calcTotal(items);
+      (data as any).total = calcTotal(items);
     }
   },
 
@@ -529,15 +532,16 @@ export default {
       order = event.result;
     }
 
-    // ✉️ ПИСЬМО: когда статус = paid и email ещё не отправляли
+    // ✉️ ПИСЬМО: когда ОПЛАЧЕНО (по любому из статусов) и email ещё не отправляли
     try {
-      if (order.orderStatus === 'paid' && !order.emailSentAt) {
+      const paid = order?.paymentStatus === 'paid' || order?.orderStatus === 'paid';
+      if (paid && !order.emailSentAt) {
         await sendBothEmails(order);
       } else {
         strapi.log.info(
-          `[ORDER] email skip for ${order.orderNumber} (status=${order.orderStatus}, emailSentAt=${
-            order.emailSentAt || '-'
-          })`
+          `[ORDER] email skip for ${order.orderNumber} (paymentStatus=${order.paymentStatus || '-'}, orderStatus=${
+            order.orderStatus || '-'
+          }, emailSentAt=${order.emailSentAt || '-'})`
         );
       }
     } catch (e) {
